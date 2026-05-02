@@ -20,4 +20,6 @@ export const CONTRACT_VARIABLES = [
   { key: "{{total}}", label: "Valor Total" },
   { key: "{{data_contrato}}", label: "Data do Contrato (extenso)" },
   { key: "{{forma_pagamento}}", label: "Forma de Pagamento" },
+  { key: "{{parcelas}}", label: "Parcelas (ex: 12x de R$ 250,00)" },
+  { key: "{{valor_parcela}}", label: "Valor por Parcela" },
 ] as const;

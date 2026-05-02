@@ -89,20 +89,41 @@ export async function POST(req: Request) {
     contractContent = contract?.content ?? null;
   }
 
-  // 3. Monta dados pra substituição de variáveis
-  const procedimentos = Array.isArray(proposta.procedimentos_adicionais)
-    ? (proposta.procedimentos_adicionais as Array<{
-        procedure_name?: string;
-        quantity?: number;
-      }>)
+  // 3. Procedimentos: itens do protocolo base (se houver) + adicionais.
+  //    Os do protocolo vivem em `protocol_items`, não em `propostas`.
+  type LineProc = { procedure_name?: string; quantity?: number };
+  const protocolItems: LineProc[] = await (async () => {
+    if (!proposta.protocolo_id) return [];
+    const r = await admin
+      .from("protocol_items")
+      .select("procedure_name, quantity")
+      .eq("protocol_id", proposta.protocolo_id as string);
+    if (r.error) return [];
+    return (r.data ?? []) as LineProc[];
+  })();
+  const adicionais = Array.isArray(proposta.procedimentos_adicionais)
+    ? (proposta.procedimentos_adicionais as LineProc[])
     : [];
-  const procedimentosTexto = procedimentos
+  const todosProcedimentos = [...protocolItems, ...adicionais];
+  const procedimentosTexto = todosProcedimentos
     .map(
       (p) =>
         `${p.procedure_name ?? "Procedimento"} (Qtd: ${p.quantity ?? 1})`,
     )
     .join(", ");
+
   const valorTotal = (proposta.valor_total_cents as number) ?? 0;
+  const installments = (proposta.installments as number | null) ?? null;
+  const installmentValueCents =
+    (proposta.installment_value_cents as number | null) ?? null;
+  const parcelasTexto =
+    installments && installments > 1
+      ? `${installments}x${
+          installmentValueCents
+            ? ` de ${formatBRL(installmentValueCents)}`
+            : ""
+        }`
+      : "";
 
   const variables: Record<string, string> = {
     paciente_nome: (proposta.paciente_nome as string) ?? "",
@@ -122,6 +143,10 @@ export async function POST(req: Request) {
     forma_pagamento: ((proposta.payment_method as string) ?? "—")
       .toString()
       .toUpperCase(),
+    parcelas: parcelasTexto,
+    valor_parcela: installmentValueCents
+      ? formatBRL(installmentValueCents)
+      : "",
   };
 
   // 4. Renderiza HTML
