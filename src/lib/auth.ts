@@ -18,6 +18,10 @@ export type CurrentUser = {
   isSuperAdmin: boolean;
   isCompanyAdmin: boolean;
   isAdmin: boolean;
+  /** True quando o super_admin está "vestido" como uma empresa cliente. */
+  isImpersonating: boolean;
+  /** Id da empresa que está sendo impersonada (= companyId enquanto ativo). */
+  impersonatingCompanyId: string | null;
 };
 
 /**
@@ -75,19 +79,39 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     }
   }
 
-  const isSuperAdmin = role === "super_admin";
-  const isCompanyAdmin = role === "company_admin" || isSuperAdmin;
+  // Impersonation: super_admin pode "entrar" numa empresa cliente.
+  // Cookie `impersonating_company_id` é setado pela Server Action
+  // startImpersonation. Enquanto ativo, o user é apresentado como
+  // company_admin daquela empresa — o painel inteiro reaproveita o
+  // mesmo código sem precisar de variantes "super_admin only".
+  // Cookie é ignorado se o user não for super_admin de fato.
+  const impersonatingCompanyId =
+    cookieStore.get("impersonating_company_id")?.value ?? null;
+  const isImpersonating =
+    !!impersonatingCompanyId && role === "super_admin";
+
+  let effectiveRole: Role | null = role;
+  let effectiveCompanyId = profileCompanyId;
+  if (isImpersonating) {
+    effectiveRole = "company_admin";
+    effectiveCompanyId = impersonatingCompanyId;
+  }
+
+  const isSuperAdmin = effectiveRole === "super_admin";
+  const isCompanyAdmin = effectiveRole === "company_admin" || isSuperAdmin;
 
   return {
     id: user.id,
     email: user.email ?? null,
     profile: profile ?? null,
-    role,
-    companyId: profileCompanyId,
+    role: effectiveRole,
+    companyId: effectiveCompanyId,
     loginMode,
     isSuperAdmin,
     isCompanyAdmin,
     isAdmin: isCompanyAdmin,
+    isImpersonating,
+    impersonatingCompanyId: isImpersonating ? impersonatingCompanyId : null,
   };
 }
 

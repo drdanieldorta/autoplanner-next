@@ -3,6 +3,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "./_components/app-sidebar";
 import { AppHeader } from "./_components/app-header";
 import { PendingApproval } from "./_components/pending-approval";
+import { ImpersonationBanner } from "./_components/impersonation-banner";
 
 /**
  * Layout do grupo (app) — toda rota dentro deste grupo:
@@ -34,6 +35,9 @@ export default async function AppLayout({
         isCompanyAdmin={user.isCompanyAdmin}
       />
       <div className="flex-1 flex flex-col min-h-screen w-full bg-background">
+        {user.isImpersonating && user.impersonatingCompanyId && (
+          <ImpersonationBanner companyId={user.impersonatingCompanyId} />
+        )}
         <AppHeader
           isSuperAdmin={user.isSuperAdmin}
           companyId={user.companyId}

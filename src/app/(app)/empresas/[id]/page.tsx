@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
-import { Building2 } from "lucide-react";
+import { Building2, LogIn } from "lucide-react";
 
 import { requireSuperAdmin } from "@/lib/auth";
 import { loadEmpresaDetail } from "@/lib/services/empresa-detail";
+import { startImpersonation } from "@/lib/impersonation";
 
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import { PageHeader } from "../../_components/page-header";
@@ -36,14 +38,22 @@ export default async function EmpresaPage({
         icon={Building2}
         backHref="/empresas"
         actions={
-          <DeleteButton
-            action={deleteEmpresaFromForm}
-            id={detail.company.id}
-            label="Excluir empresa"
-            title="Excluir empresa?"
-            description="A empresa será removida. Funcionários, propostas, contratos e protocolos vinculados podem ficar órfãos — verifique antes."
-            successMessage="Empresa excluída"
-          />
+          <div className="flex items-center gap-2">
+            <form action={startImpersonation.bind(null, detail.company.id)}>
+              <Button type="submit" variant="outline">
+                <LogIn className="h-4 w-4 mr-2" />
+                Entrar como esta empresa
+              </Button>
+            </form>
+            <DeleteButton
+              action={deleteEmpresaFromForm}
+              id={detail.company.id}
+              label="Excluir empresa"
+              title="Excluir empresa?"
+              description="A empresa será removida. Funcionários, propostas, contratos e protocolos vinculados podem ficar órfãos — verifique antes."
+              successMessage="Empresa excluída"
+            />
+          </div>
         }
       />
 

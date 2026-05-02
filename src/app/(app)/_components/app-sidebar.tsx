@@ -8,6 +8,7 @@ import {
   Users,
   Layout as LayoutIcon,
   FileSignature,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -42,6 +43,13 @@ const menuItems: MenuItem[] = [
     url: "/",
     icon: LayoutDashboard,
     description: "Visão geral do sistema",
+  },
+  {
+    title: "Painel Admin",
+    url: "/admin",
+    icon: ShieldCheck,
+    description: "Panorama de empresas",
+    superAdminOnly: true,
   },
   {
     title: "Ferramentas",
