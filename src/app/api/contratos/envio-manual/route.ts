@@ -17,6 +17,7 @@ import {
   formatDateExtenso,
   replaceContractVariables,
 } from "@/lib/contracts/render";
+import { renderDefaultSystemContract } from "@/lib/contracts/templates/default-system-contract";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -150,12 +151,27 @@ export async function POST(req: Request) {
   };
 
   // 4. Renderiza HTML
-  // Por enquanto: se houver contractContent, usa direto; senão, usa um
-  // template padrão simples. Os 3 templates HTML completos do n8n
-  // (padrão + wrapper custom + termos clínicos IM/EV/IMPLANTE) viram
-  // arquivos próprios em fases futuras (lib/contracts/templates/*.html).
-  const innerHtml = contractContent ?? defaultContractTemplate();
-  const fullHtml = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Contrato</title></head><body style="font-family:Arial,sans-serif;font-size:12px;line-height:1.55;color:#111;padding:20mm;">${replaceContractVariables(innerHtml, variables)}</body></html>`;
+  //   - Com contract_id: HTML do user (substitui {{vars}}).
+  //   - Sem contract_id: template do sistema (TCLE completo, code-driven,
+  //     com termos condicionais IM/EV/Implante). Não passa por replace
+  //     porque já é renderizado direto com os dados.
+  const fullHtml = contractContent
+    ? `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Contrato</title></head><body style="font-family:Arial,sans-serif;font-size:12px;line-height:1.55;color:#111;padding:20mm;">${replaceContractVariables(contractContent, variables)}</body></html>`
+    : renderDefaultSystemContract({
+        paciente_nome: (proposta.paciente_nome as string) ?? "",
+        paciente_cpf: (proposta.paciente_cpf as string) ?? "",
+        profissional_nome: (proposta.profissional_nome as string) ?? "",
+        profissional_cpf: (proposta.profissional_cpf as string) ?? "",
+        profissional_crm: (proposta.profissional_crm as string) ?? "",
+        procedimentos: todosProcedimentos,
+        subtotal_cents: valorTotal,
+        total_cents: valorTotal,
+        forma_pagamento: (proposta.payment_method as string | null) ?? null,
+        custom_payment_method:
+          (proposta.custom_payment_method as string | null) ?? null,
+        installments,
+        installment_value_cents: installmentValueCents,
+      });
 
   // 5. PDF
   let pdfBuffer: Buffer;
@@ -218,16 +234,3 @@ export async function POST(req: Request) {
   }
 }
 
-function defaultContractTemplate(): string {
-  return `
-<h1>Contrato de Prestação de Serviços em Saúde</h1>
-<p>Por este instrumento particular, eu, <strong>{{paciente_nome}}</strong>, CPF <strong>{{paciente_cpf}}</strong>, declaro estar ciente do plano de tratamento abaixo, prestado pelo profissional <strong>{{profissional_nome}}</strong> (CRM {{profissional_crm}}, CPF {{profissional_cpf}}, {{profissional_especialidade}}).</p>
-<h2>Procedimentos</h2>
-<p>{{procedimentos}}</p>
-<h2>Valor</h2>
-<p>Subtotal: {{subtotal}}<br/>Desconto: {{desconto}}<br/><strong>Total: {{total}}</strong></p>
-<p>Forma de pagamento: {{forma_pagamento}}</p>
-<p>São Paulo, {{data_contrato}}.</p>
-<p style="margin-top:60px;border-top:1px solid #000;padding-top:8px;">{{paciente_nome}}<br/>CPF: {{paciente_cpf}}</p>
-`;
-}
