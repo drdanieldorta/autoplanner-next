@@ -9,6 +9,7 @@ import {
   Layout as LayoutIcon,
   FileSignature,
   ShieldCheck,
+  ExternalLink,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -35,6 +36,8 @@ type MenuItem = {
   companyAdminOnly?: boolean;
   companyOnly?: boolean;
   adminOnly?: boolean;
+  /** Quando true, abre em nova aba via <a target="_blank">. */
+  external?: boolean;
 };
 
 const menuItems: MenuItem[] = [
@@ -50,6 +53,14 @@ const menuItems: MenuItem[] = [
     icon: ShieldCheck,
     description: "Panorama de empresas",
     superAdminOnly: true,
+  },
+  {
+    title: "Dashboard MDIA",
+    url: "https://dashboard-mdia.vercel.app/",
+    icon: ExternalLink,
+    description: "Painel externo (nova aba)",
+    superAdminOnly: true,
+    external: true,
   },
   {
     title: "Ferramentas",
@@ -144,51 +155,70 @@ export function AppSidebar({ isAdmin, isSuperAdmin, isCompanyAdmin }: Props) {
 
           <SidebarGroupContent>
             <SidebarMenu>
-              {filtered.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    className={`group relative transition-all duration-200 ${
-                      isActive(item.url)
-                        ? "bg-primary text-primary-foreground shadow-md"
-                        : "hover:bg-sidebar-accent text-sidebar-foreground"
-                    }`}
-                  >
-                    <Link
-                      href={item.url}
-                      className="my-[10px] py-[23px] touch-manipulation"
+              {filtered.map((item) => {
+                const itemActive = !item.external && isActive(item.url);
+                const inner = (
+                  <>
+                    <item.icon
+                      className={`h-5 w-5 ${
+                        itemActive
+                          ? "text-primary-foreground"
+                          : "text-muted-foreground"
+                      }`}
+                    />
+                    {!isCollapsed && (
+                      <div className="flex flex-col ml-2">
+                        <span
+                          className={`font-medium text-sm ${
+                            itemActive ? "text-primary-foreground" : ""
+                          }`}
+                        >
+                          {item.title}
+                        </span>
+                        <span
+                          className={`text-xs my-px py-0 ${
+                            itemActive
+                              ? "text-primary-foreground/80"
+                              : "text-muted-foreground group-hover:text-sidebar-foreground"
+                          }`}
+                        >
+                          {item.description}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                );
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      className={`group relative transition-all duration-200 ${
+                        itemActive
+                          ? "bg-primary text-primary-foreground shadow-md"
+                          : "hover:bg-sidebar-accent text-sidebar-foreground"
+                      }`}
                     >
-                      <item.icon
-                        className={`h-5 w-5 ${
-                          isActive(item.url)
-                            ? "text-primary-foreground"
-                            : "text-muted-foreground"
-                        }`}
-                      />
-                      {!isCollapsed && (
-                        <div className="flex flex-col ml-2">
-                          <span
-                            className={`font-medium text-sm ${
-                              isActive(item.url) ? "text-primary-foreground" : ""
-                            }`}
-                          >
-                            {item.title}
-                          </span>
-                          <span
-                            className={`text-xs my-px py-0 ${
-                              isActive(item.url)
-                                ? "text-primary-foreground/80"
-                                : "text-muted-foreground group-hover:text-sidebar-foreground"
-                            }`}
-                          >
-                            {item.description}
-                          </span>
-                        </div>
+                      {item.external ? (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="my-[10px] py-[23px] touch-manipulation"
+                        >
+                          {inner}
+                        </a>
+                      ) : (
+                        <Link
+                          href={item.url}
+                          className="my-[10px] py-[23px] touch-manipulation"
+                        >
+                          {inner}
+                        </Link>
                       )}
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
