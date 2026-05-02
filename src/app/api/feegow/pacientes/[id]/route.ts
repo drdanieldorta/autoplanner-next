@@ -33,7 +33,14 @@ export async function GET(
 
   try {
     const data = await feegow(creds.feegow_token).searchPatient(id);
-    if (!data) return jsonError("Paciente não encontrado", 404);
+    if (!data) {
+      // searchPatient log em console.error o raw — vai pro runtime log da Vercel.
+      // 502 sinaliza falha downstream em vez de "não encontrado" (que é 404).
+      return jsonError(
+        "Resposta inesperada da Feegow ao buscar paciente",
+        502,
+      );
+    }
     return NextResponse.json({ cpf: data.cpf });
   } catch (err) {
     if (err instanceof FeegowError) {
