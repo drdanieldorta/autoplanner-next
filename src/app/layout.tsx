@@ -4,6 +4,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { QueryProvider } from "@/components/query-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: "InfinitePlan",
@@ -27,6 +28,7 @@ export default function RootLayout({
           <QueryProvider>{children}</QueryProvider>
           <Toaster richColors closeButton position="top-right" />
         </ThemeProvider>
+        <Analytics />
       </body>
     </html>
   );
