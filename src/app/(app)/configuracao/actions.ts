@@ -11,13 +11,6 @@ const Schema = z.object({
   authentiqueToken: z.string().trim().optional(),
   crmToken: z.string().trim().optional(),
   crmAdminToken: z.string().trim().optional(),
-  webhookUrl: z
-    .string()
-    .trim()
-    .url("URL de webhook inválida")
-    .or(z.literal("")),
-  webhookSecret: z.string().trim().optional(),
-  webhookEnabled: z.boolean(),
 });
 
 export type UpdateCredentialsState =
@@ -26,13 +19,15 @@ export type UpdateCredentialsState =
   | null;
 
 /**
- * Atualiza credenciais e webhook.
+ * Atualiza credenciais.
  *
  * Preserve-existing-if-empty: tokens vazios NÃO sobrescrevem o existente.
- * Apenas o webhook_url/secret/enabled aceitam string vazia explicitamente.
- *
  * Mesmo padrão do Vite legacy (configuracao.tsx) para evitar perda
- * acidental de tokens quando o admin só queria atualizar o webhook.
+ * acidental de tokens.
+ *
+ * Webhook outbound foi descartado (decisão 2026-05-02) — colunas
+ * webhook_url/webhook_secret/webhook_enabled permanecem no banco mas
+ * não são mais lidas nem escritas pelo painel.
  */
 export async function updateCredentials(
   _prev: UpdateCredentialsState,
@@ -49,9 +44,6 @@ export async function updateCredentials(
     authentiqueToken: formData.get("authentiqueToken") || undefined,
     crmToken: formData.get("crmToken") || undefined,
     crmAdminToken: formData.get("crmAdminToken") || undefined,
-    webhookUrl: formData.get("webhookUrl") ?? "",
-    webhookSecret: formData.get("webhookSecret") || undefined,
-    webhookEnabled: formData.get("webhookEnabled") === "on",
   });
 
   if (!parsed.success) {
@@ -63,8 +55,7 @@ export async function updateCredentials(
     !data.feegowToken &&
     !data.authentiqueToken &&
     !data.crmToken &&
-    !data.crmAdminToken &&
-    data.webhookUrl === ""
+    !data.crmAdminToken
   ) {
     return { ok: false, error: "Nada para salvar — preencha algum campo." };
   }
@@ -74,9 +65,7 @@ export async function updateCredentials(
   // Pega valores atuais para preservar tokens vazios
   const existingResult = await supabase
     .from("api_credentials")
-    .select(
-      "feegow_token, authentique_token, crm_token, crm_admin_token, webhook_url, webhook_secret, webhook_enabled",
-    )
+    .select("feegow_token, authentique_token, crm_token, crm_admin_token")
     .eq("company_id", user.companyId)
     .maybeSingle();
 
@@ -89,9 +78,6 @@ export async function updateCredentials(
     authentique_token: string | null;
     crm_token: string | null;
     crm_admin_token: string | null;
-    webhook_url: string | null;
-    webhook_secret: string | null;
-    webhook_enabled: boolean | null;
   } | null;
 
   const upsertPayload = {
@@ -109,15 +95,6 @@ export async function updateCredentials(
         ? data.crmAdminToken
         : existing?.crm_admin_token ?? null
       : existing?.crm_admin_token ?? null,
-    webhook_url:
-      data.webhookUrl !== ""
-        ? data.webhookUrl
-        : existing?.webhook_url ?? null,
-    webhook_secret:
-      data.webhookSecret && data.webhookSecret.trim() !== ""
-        ? data.webhookSecret
-        : existing?.webhook_secret ?? null,
-    webhook_enabled: data.webhookEnabled,
   };
 
   const upsert = await supabase

@@ -15,9 +15,6 @@ export type CredentialsStatus = {
   hasAuthentique: boolean;
   hasCrm: boolean;
   hasCrmAdmin: boolean;
-  webhookUrl: string | null;
-  webhookSecret: string | null;
-  webhookEnabled: boolean;
 };
 
 export async function getCredentialsStatus(args: {
@@ -26,9 +23,7 @@ export async function getCredentialsStatus(args: {
   const supabase = await createClient();
   const result = await supabase
     .from("api_credentials")
-    .select(
-      "feegow_token, authentique_token, crm_token, crm_admin_token, webhook_url, webhook_secret, webhook_enabled",
-    )
+    .select("feegow_token, authentique_token, crm_token, crm_admin_token")
     .eq("company_id", args.companyId)
     .maybeSingle();
 
@@ -37,13 +32,7 @@ export async function getCredentialsStatus(args: {
   }
   const cred = result.data as Pick<
     ApiCredentialsRow,
-    | "feegow_token"
-    | "authentique_token"
-    | "crm_token"
-    | "crm_admin_token"
-    | "webhook_url"
-    | "webhook_secret"
-    | "webhook_enabled"
+    "feegow_token" | "authentique_token" | "crm_token" | "crm_admin_token"
   > | null;
   if (!cred) {
     return {
@@ -51,9 +40,6 @@ export async function getCredentialsStatus(args: {
       hasAuthentique: false,
       hasCrm: false,
       hasCrmAdmin: false,
-      webhookUrl: null,
-      webhookSecret: null,
-      webhookEnabled: true,
     };
   }
   return {
@@ -61,8 +47,5 @@ export async function getCredentialsStatus(args: {
     hasAuthentique: !!cred.authentique_token,
     hasCrm: !!cred.crm_token,
     hasCrmAdmin: !!cred.crm_admin_token,
-    webhookUrl: cred.webhook_url,
-    webhookSecret: cred.webhook_secret,
-    webhookEnabled: cred.webhook_enabled ?? true,
   };
 }

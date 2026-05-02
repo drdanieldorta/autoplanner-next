@@ -8,7 +8,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import {
   Card,
   CardContent,
@@ -24,9 +23,6 @@ type Props = {
   hasAuthentique: boolean;
   hasCrm: boolean;
   hasCrmAdmin: boolean;
-  webhookUrl: string;
-  webhookSecret: string;
-  webhookEnabled: boolean;
 };
 
 function SubmitButton() {
@@ -50,9 +46,6 @@ export function ConfiguracaoForm({
   hasAuthentique,
   hasCrm,
   hasCrmAdmin,
-  webhookUrl,
-  webhookSecret,
-  webhookEnabled,
 }: Props) {
   const [state, action] = useActionState<UpdateCredentialsState, FormData>(
     updateCredentials,
@@ -122,7 +115,7 @@ export function ConfiguracaoForm({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">API CRM (Helena)</CardTitle>
+            <CardTitle className="text-lg">API MD.IA</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div>
@@ -165,54 +158,6 @@ export function ConfiguracaoForm({
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">
-              Webhook outbound (proposal.created)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div>
-              <Label htmlFor="webhookUrl">URL de destino</Label>
-              <Input
-                id="webhookUrl"
-                name="webhookUrl"
-                type="url"
-                defaultValue={webhookUrl}
-                placeholder="https://meu-sistema/webhook/proposta-criada"
-                className="mt-1"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Recebe POST JSON sempre que uma proposta é criada (modo manual
-                ou automático).
-              </p>
-            </div>
-            <div>
-              <Label htmlFor="webhookSecret">Secret (HMAC)</Label>
-              <Input
-                id="webhookSecret"
-                name="webhookSecret"
-                type="password"
-                placeholder={
-                  webhookSecret
-                    ? "Configurado — preencha para substituir"
-                    : "Opcional — usado para HMAC SHA-256"
-                }
-                className="mt-1"
-              />
-            </div>
-            <div className="flex items-center gap-3 pt-2">
-              <Switch
-                id="webhookEnabled"
-                name="webhookEnabled"
-                defaultChecked={webhookEnabled}
-              />
-              <Label htmlFor="webhookEnabled" className="cursor-pointer">
-                Habilitado
-              </Label>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       <div className="flex justify-end">

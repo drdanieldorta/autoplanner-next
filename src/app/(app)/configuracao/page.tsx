@@ -91,9 +91,9 @@ export default async function ConfiguracaoPage() {
 
           <div className="flex items-center justify-between p-4 rounded-lg border bg-card">
             <div>
-              <p className="font-medium">CRM (Helena)</p>
+              <p className="font-medium">MD.IA</p>
               <p className="text-sm text-muted-foreground">
-                Vínculo com o InfiniteCRM (api.helena.run)
+                Vínculo com o painel MD.IA (api.helena.run)
               </p>
             </div>
             <Indicator ok={status?.hasCrm ?? false} />
@@ -102,9 +102,9 @@ export default async function ConfiguracaoPage() {
           {user.isSuperAdmin && (
             <div className="flex items-center justify-between p-4 rounded-lg border bg-card">
               <div>
-                <p className="font-medium">CRM Admin</p>
+                <p className="font-medium">MD.IA Admin</p>
                 <p className="text-sm text-muted-foreground">
-                  Token administrativo do CRM (apenas super admins)
+                  Token administrativo do MD.IA (apenas super admins)
                 </p>
               </div>
               <Indicator ok={status?.hasCrmAdmin ?? false} />
@@ -119,9 +119,6 @@ export default async function ConfiguracaoPage() {
         hasAuthentique={status?.hasAuthentique ?? false}
         hasCrm={status?.hasCrm ?? false}
         hasCrmAdmin={status?.hasCrmAdmin ?? false}
-        webhookUrl={status?.webhookUrl ?? ""}
-        webhookSecret={status?.webhookSecret ?? ""}
-        webhookEnabled={status?.webhookEnabled ?? true}
       />
     </div>
   );
