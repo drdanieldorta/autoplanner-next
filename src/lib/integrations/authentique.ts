@@ -115,12 +115,15 @@ export function authentique(token: string) {
         }
       `;
 
+      // Authentique exige email OU phone por signer, não ambos
+      // (`only_one_allowed:email,phone`). Como `delivery_method` é fixo
+      // em WhatsApp, mandamos apenas o phone — o email do paciente fica
+      // em `propostas` para outros usos, mas não vai pro signer.
       const variables = {
         document: { name: args.name },
         signers: args.signers.map((s) => ({
           name: s.name,
           phone: phoneToE164(s.phone),
-          email: s.email,
           delivery_method: "DELIVERY_METHOD_WHATSAPP",
           action: s.action ?? "SIGN",
         })),
