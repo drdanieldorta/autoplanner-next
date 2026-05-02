@@ -16,6 +16,7 @@ import {
 import { PageHeader } from "../../_components/page-header";
 import { DeleteButton } from "../../_components/delete-button";
 import { StatusSelector } from "../_components/status-selector";
+import { ContractActions } from "../_components/contract-actions";
 import { deleteOrcamentoFromForm } from "../actions";
 
 export const metadata = { title: "Orçamento · InfinitePlan" };
@@ -234,6 +235,14 @@ export default async function OrcamentoPage({
                 </div>
               </div>
             )}
+
+            <div className="pt-3 border-t">
+              <p className="text-sm text-muted-foreground mb-2">Contrato</p>
+              <ContractActions
+                propostaId={proposta.id}
+                documentId={proposta.document_id ?? null}
+              />
+            </div>
 
             {procedimentosAdicionais.length > 0 && (
               <div>

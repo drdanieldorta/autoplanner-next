@@ -33,28 +33,6 @@ export async function getCompanyCredentials(
 }
 
 /**
- * Atualiza document_id de uma proposta. Usado pelo callback Authentique
- * e pelos Route Handlers de criação de proposta.
- *
- * filterField permite escolher entre `id` (uuid local, modo manual)
- * e `id_proposta_api` (int Feegow, modo automático). Espelho do que
- * o n8n faz hoje (ver docs/N8N.md fichas 4 e 6).
- */
-export async function setPropostaDocumentId(args: {
-  filterField: "id" | "id_proposta_api";
-  filterValue: string | number;
-  documentId: string;
-}): Promise<void> {
-  const admin = createAdminClient();
-  const result = await admin
-    .from("propostas")
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .update({ document_id: args.documentId } as any)
-    .eq(args.filterField, args.filterValue);
-  if (result.error) throw new Error(result.error.message);
-}
-
-/**
  * Busca a proposta a partir do document_id Authentique. Usado pelo
  * callback `/webhooks/authentique` para resolver company + paciente_id +
  * id_proposta_api a partir do evento de assinatura.

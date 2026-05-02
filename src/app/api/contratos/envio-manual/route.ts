@@ -9,10 +9,7 @@ import {
   authentique,
   AuthentiqueError,
 } from "@/lib/integrations/authentique";
-import {
-  getCompanyCredentials,
-  setPropostaDocumentId,
-} from "@/lib/integrations/credentials";
+import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { generatePdfFromHtml } from "@/lib/integrations/pdf";
 import {
   formatBRL,
@@ -162,11 +159,19 @@ export async function POST(req: Request) {
       ],
     });
 
-    await setPropostaDocumentId({
-      filterField: "id",
-      filterValue: body.proposta_id,
-      documentId: result.id,
-    });
+    // Salva document_id + promove status para "enviado" (se ainda rascunho).
+    // Mantém status_id intacto — o usuário ainda pode mover entre 1..5 no
+    // StatusSelector. A promoção é só para refletir que o contrato saiu.
+    const updateResult = await admin
+      .from("propostas")
+      .update({
+        document_id: result.id,
+        status: "enviado",
+      } as never)
+      .eq("id", body.proposta_id);
+    if (updateResult.error) {
+      return jsonError(updateResult.error.message, 500);
+    }
 
     return NextResponse.json({
       ok: true,

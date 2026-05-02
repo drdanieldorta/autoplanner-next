@@ -270,6 +270,12 @@ export function OrcamentoForm({
     setExtraValueInput("");
   };
 
+  // Distingue qual botão acionou o submit. "save_and_send" encadeia
+  // POST /api/contratos/envio-manual após o orçamento ser criado.
+  const [submitAction, setSubmitAction] = useState<
+    "save" | "save_and_send"
+  >("save");
+
   const onSubmit = form.handleSubmit((values) => {
     if (protocolItems.length === 0 && values.additional_procedures.length === 0) {
       toast.error(
@@ -333,7 +339,10 @@ export function OrcamentoForm({
           : null,
     };
 
+    const shouldSendContract = submitAction === "save_and_send";
+
     startTransition(async () => {
+      let propostaId: string;
       try {
         const res = await fetch("/api/propostas", {
           method: "POST",
@@ -347,11 +356,52 @@ export function OrcamentoForm({
           toast.error(err.error ?? "Falha ao criar orçamento");
           return;
         }
+        const created = (await res.json()) as { id: string };
+        propostaId = created.id;
+      } catch {
+        toast.error("Erro de rede ao salvar orçamento");
+        return;
+      }
+
+      if (!shouldSendContract) {
         toast.success("Orçamento criado com sucesso");
         router.push("/orcamentos");
         router.refresh();
+        return;
+      }
+
+      // Encadeia o envio do contrato. Se falhar, não joga fora o orçamento —
+      // o user reabilita pelo botão "Reenviar" na tela de detalhes.
+      try {
+        const sendRes = await fetch("/api/contratos/envio-manual", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ proposta_id: propostaId }),
+        });
+        if (!sendRes.ok) {
+          const err = (await sendRes
+            .json()
+            .catch(() => ({}))) as { error?: string };
+          toast.error(
+            `Orçamento criado, mas falhou ao enviar o contrato: ${
+              err.error ?? "tente reenviar pela tela de detalhes"
+            }`,
+            { duration: 8000 },
+          );
+          router.push(`/orcamentos/${propostaId}`);
+          router.refresh();
+          return;
+        }
+        toast.success("Orçamento criado e contrato enviado");
+        router.push(`/orcamentos/${propostaId}`);
+        router.refresh();
       } catch {
-        toast.error("Erro de rede ao salvar orçamento");
+        toast.error(
+          "Orçamento criado, mas erro de rede ao enviar contrato. Reenvie pela tela de detalhes.",
+          { duration: 8000 },
+        );
+        router.push(`/orcamentos/${propostaId}`);
+        router.refresh();
       }
     });
   });
@@ -975,7 +1025,7 @@ export function OrcamentoForm({
         </Card>
       </div>
 
-      <div className="flex justify-end gap-3">
+      <div className="flex flex-wrap justify-end gap-3">
         <Button
           type="button"
           variant="outline"
@@ -984,8 +1034,24 @@ export function OrcamentoForm({
         >
           Cancelar
         </Button>
-        <Button type="submit" disabled={isPending}>
-          {isPending ? "Salvando..." : "Salvar orçamento"}
+        <Button
+          type="submit"
+          variant="outline"
+          disabled={isPending}
+          onClick={() => setSubmitAction("save")}
+        >
+          {isPending && submitAction === "save"
+            ? "Salvando..."
+            : "Salvar orçamento"}
+        </Button>
+        <Button
+          type="submit"
+          disabled={isPending}
+          onClick={() => setSubmitAction("save_and_send")}
+        >
+          {isPending && submitAction === "save_and_send"
+            ? "Enviando..."
+            : "Salvar e enviar contrato"}
         </Button>
       </div>
     </form>
