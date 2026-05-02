@@ -196,6 +196,22 @@ export function OrcamentoForm({
     form.setValue("patient_birth", patient.birth);
     form.setValue("patient_neighborhood", patient.neighborhood);
     setPatientPopoverOpen(false);
+
+    // CPF não vem em /patient/list — buscar pontualmente via /patient/search.
+    // Falha silenciosa: se Feegow não responder, o user pode digitar manualmente
+    // no campo CPF (que continua editável).
+    if (hasFeegow && patient.id && patient.id !== "manual") {
+      fetch(`/api/feegow/pacientes/${encodeURIComponent(patient.id)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { cpf?: string } | null) => {
+          if (data?.cpf) {
+            form.setValue("patient_cpf", formatCPF(data.cpf));
+          }
+        })
+        .catch(() => {
+          // ignora — CPF fica em branco e user pode preencher
+        });
+    }
   };
 
   const onSelectProfessional = (prof: OrcamentoProfessionalOption) => {
