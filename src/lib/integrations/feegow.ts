@@ -75,13 +75,20 @@ export type FeegowProfessional = {
   sys_user: string;
 };
 
-// Apenas documentos.cpf é o que nos interessa. Outros campos (`email`,
-// `nome`) variam de shape no response da Feegow — `email`, por exemplo,
-// pode vir como array (["primario@x.com", ""]) e quebrar `z.string()`.
-// Mantemos o schema mínimo pra não rejeitar a resposta inteira por
-// causa de um campo que nem usamos.
+// Schema enxuto: só os campos que efetivamente lemos. Não validamos
+// `email` nem `nome` aqui porque `email` da Feegow vem como array
+// (["primario@x.com",""]) e quebraria `z.string()` — derrubaria o
+// parse inteiro. Endereço vem em campos planos no nível raiz.
 const PatientSearchSchema = z.object({
   documentos: z.object({ cpf: z.string().nullish() }).nullish(),
+  nascimento: z.string().nullish(),
+  endereco: z.string().nullish(),
+  numero: z.string().nullish(),
+  complemento: z.string().nullish(),
+  bairro: z.string().nullish(),
+  cidade: z.string().nullish(),
+  estado: z.string().nullish(),
+  cep: z.string().nullish(),
 });
 
 const ProposalCreateResponseSchema = z.object({
@@ -206,11 +213,25 @@ export function feegow(token: string) {
     },
 
     /**
-     * Busca paciente por id e devolve apenas o CPF — único campo que
-     * `/patient/list` não traz. Shape confirmado:
-     *   { success, content: { ..., documentos: { cpf, ... }, ... } }
+     * Busca paciente por id e devolve campos que `/patient/list` não traz
+     * (CPF + endereço completo + nascimento). Shape confirmado:
+     *   { success, content: { documentos: { cpf, ... }, endereco, numero,
+     *     complemento, bairro, cidade, estado, cep, nascimento, ... } }
+     *
+     * Nascimento vem como "DD-MM-YYYY" e é convertido para "DD/MM/YYYY"
+     * (padrão br-BR usado no resto do projeto).
      */
-    async searchPatient(pacienteId: string): Promise<{ cpf: string } | null> {
+    async searchPatient(pacienteId: string): Promise<{
+      cpf: string;
+      nascimento: string;
+      endereco: string;
+      numero: string;
+      complemento: string;
+      bairro: string;
+      cidade: string;
+      estado: string;
+      cep: string;
+    } | null> {
       const path = `/patient/search?paciente_id=${encodeURIComponent(pacienteId)}`;
       const raw = await fetcher<unknown>(path);
       if (!raw || typeof raw !== "object") return null;
@@ -219,8 +240,24 @@ export function feegow(token: string) {
       if (!content || typeof content !== "object") return null;
 
       const parsed = PatientSearchSchema.safeParse(content);
-      const cpf = parsed.success ? parsed.data.documentos?.cpf ?? "" : "";
-      return cpf ? { cpf } : null;
+      if (!parsed.success) return null;
+
+      const nascRaw = parsed.data.nascimento ?? "";
+      const nascimento = /^\d{2}-\d{2}-\d{4}$/.test(nascRaw)
+        ? nascRaw.replace(/-/g, "/")
+        : nascRaw;
+
+      return {
+        cpf: parsed.data.documentos?.cpf ?? "",
+        nascimento,
+        endereco: parsed.data.endereco ?? "",
+        numero: parsed.data.numero ?? "",
+        complemento: parsed.data.complemento ?? "",
+        bairro: parsed.data.bairro ?? "",
+        cidade: parsed.data.cidade ?? "",
+        estado: parsed.data.estado ?? "",
+        cep: parsed.data.cep ?? "",
+      };
     },
 
     /** Lista profissionais. */

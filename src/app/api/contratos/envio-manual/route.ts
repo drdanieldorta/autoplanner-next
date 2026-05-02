@@ -9,6 +9,7 @@ import {
   authentique,
   AuthentiqueError,
 } from "@/lib/integrations/authentique";
+import { feegow } from "@/lib/integrations/feegow";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { generatePdfFromHtml } from "@/lib/integrations/pdf";
 import {
@@ -126,11 +127,73 @@ export async function POST(req: Request) {
         }`
       : "";
 
+  // Endereço completo + nascimento vêm direto da Feegow no momento da
+  // renderização — o paciente pode ter atualizado os dados depois da
+  // criação da proposta. Modo manual (sem feegow_token) ou paciente_id
+  // = "manual" pula isso e os campos saem vazios.
+  type FeegowExtras = {
+    nascimento: string;
+    endereco: string;
+    numero: string;
+    complemento: string;
+    bairro: string;
+    cidade: string;
+    estado: string;
+    cep: string;
+  };
+  let extras: FeegowExtras = {
+    nascimento: "",
+    endereco: "",
+    numero: "",
+    complemento: "",
+    bairro: "",
+    cidade: "",
+    estado: "",
+    cep: "",
+  };
+  const pacienteIdRaw = (proposta.paciente_id as string) ?? "";
+  if (
+    pacienteIdRaw &&
+    pacienteIdRaw !== "manual" &&
+    creds.feegow_token
+  ) {
+    try {
+      const data = await feegow(creds.feegow_token).searchPatient(
+        pacienteIdRaw,
+      );
+      if (data) {
+        extras = {
+          nascimento: data.nascimento,
+          endereco: data.endereco,
+          numero: data.numero,
+          complemento: data.complemento,
+          bairro: data.bairro,
+          cidade: data.cidade,
+          estado: data.estado,
+          cep: data.cep,
+        };
+      }
+    } catch {
+      // Feegow indisponível: vai com o que estiver na proposta.
+    }
+  }
+
   const variables: Record<string, string> = {
     paciente_nome: (proposta.paciente_nome as string) ?? "",
     paciente_cpf: formatCPF((proposta.paciente_cpf as string) ?? ""),
     paciente_email: (proposta.paciente_email as string) ?? "",
     paciente_telefone: (proposta.paciente_telefone as string) ?? "",
+    paciente_nascimento:
+      extras.nascimento ||
+      ((proposta.paciente_nascimento as string) ?? ""),
+    paciente_endereco: extras.endereco,
+    paciente_numero: extras.numero,
+    paciente_complemento: extras.complemento,
+    paciente_bairro:
+      extras.bairro || ((proposta.paciente_bairro as string) ?? ""),
+    paciente_cidade: extras.cidade,
+    paciente_estado: extras.estado,
+    paciente_cep: extras.cep,
     profissional_nome: (proposta.profissional_nome as string) ?? "",
     profissional_cpf: formatCPF((proposta.profissional_cpf as string) ?? ""),
     profissional_crm: (proposta.profissional_crm as string) ?? "",
