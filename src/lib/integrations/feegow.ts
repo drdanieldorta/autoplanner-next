@@ -75,10 +75,13 @@ export type FeegowProfessional = {
   sys_user: string;
 };
 
+// Apenas documentos.cpf é o que nos interessa. Outros campos (`email`,
+// `nome`) variam de shape no response da Feegow — `email`, por exemplo,
+// pode vir como array (["primario@x.com", ""]) e quebrar `z.string()`.
+// Mantemos o schema mínimo pra não rejeitar a resposta inteira por
+// causa de um campo que nem usamos.
 const PatientSearchSchema = z.object({
   documentos: z.object({ cpf: z.string().nullish() }).nullish(),
-  nome: z.string().nullish(),
-  email: z.string().nullish(),
 });
 
 const ProposalCreateResponseSchema = z.object({
@@ -203,59 +206,21 @@ export function feegow(token: string) {
     },
 
     /**
-     * Busca paciente por id (devolve dados completos com CPF).
-     *
-     * O shape da resposta da Feegow para esse endpoint não está bem
-     * documentado nos docs do projeto — só sabemos que o CPF mora em
-     * `documentos.cpf` em algum nível. Tentamos os 3 caminhos plausíveis
-     * (compatível com `body.content.content[0]`, `body.content` direto,
-     * `body` direto) antes de desistir e logar o raw payload.
+     * Busca paciente por id e devolve apenas o CPF — único campo que
+     * `/patient/list` não traz. Shape confirmado:
+     *   { success, content: { ..., documentos: { cpf, ... }, ... } }
      */
-    async searchPatient(pacienteId: string): Promise<{
-      cpf: string;
-      nome: string;
-      email: string;
-    } | null> {
+    async searchPatient(pacienteId: string): Promise<{ cpf: string } | null> {
       const path = `/patient/search?paciente_id=${encodeURIComponent(pacienteId)}`;
       const raw = await fetcher<unknown>(path);
-      if (!raw || typeof raw !== "object") {
-        console.error("[feegow.searchPatient] raw não é objeto:", JSON.stringify(raw));
-        return null;
-      }
+      if (!raw || typeof raw !== "object") return null;
 
-      // Coleta todos os candidatos plausíveis a "objeto do paciente".
-      const candidates: unknown[] = [];
-      const r = raw as Record<string, unknown>;
-      const content = r.content;
-      if (content && typeof content === "object") {
-        // body.content.content (array ou objeto)
-        const inner = (content as Record<string, unknown>).content;
-        if (Array.isArray(inner)) candidates.push(...inner);
-        else if (inner && typeof inner === "object") candidates.push(inner);
-        // body.content (objeto direto ou array)
-        if (Array.isArray(content)) candidates.push(...content);
-        else candidates.push(content);
-      }
-      // body direto
-      candidates.push(raw);
+      const content = (raw as { content?: unknown }).content;
+      if (!content || typeof content !== "object") return null;
 
-      for (const c of candidates) {
-        if (!c || typeof c !== "object") continue;
-        const parsed = PatientSearchSchema.safeParse(c);
-        if (parsed.success && parsed.data.documentos?.cpf) {
-          return {
-            cpf: parsed.data.documentos.cpf,
-            nome: parsed.data.nome ?? "",
-            email: parsed.data.email ?? "",
-          };
-        }
-      }
-
-      console.error(
-        `[feegow.searchPatient] nenhum candidato bateu com PatientSearchSchema. paciente_id=${pacienteId}. raw=`,
-        JSON.stringify(raw).slice(0, 2000),
-      );
-      return null;
+      const parsed = PatientSearchSchema.safeParse(content);
+      const cpf = parsed.success ? parsed.data.documentos?.cpf ?? "" : "";
+      return cpf ? { cpf } : null;
     },
 
     /** Lista profissionais. */
