@@ -70,9 +70,14 @@ export function authentique(token: string) {
     } catch {
       // body não-JSON
     }
-    if (!res.ok) throw new AuthentiqueError(res.status, json);
+    if (!res.ok) {
+      const msg = extractGraphqlErrorMessage(json) ?? `HTTP ${res.status}`;
+      throw new AuthentiqueError(res.status, json, msg);
+    }
     if (json && typeof json === "object" && "errors" in json && json.errors) {
-      throw new AuthentiqueError(200, json, "GraphQL errors");
+      const msg =
+        extractGraphqlErrorMessage(json) ?? "GraphQL errors";
+      throw new AuthentiqueError(200, json, msg);
     }
     return json as { data: unknown };
   };
@@ -155,6 +160,37 @@ export function authentique(token: string) {
       return data.document?.files?.signed ?? null;
     },
   };
+}
+
+/**
+ * Extrai uma mensagem legível do payload GraphQL de erro. Authentique
+ * devolve `{ errors: [{ message, extensions: { validation: { campo: [...] } } }] }`
+ * tanto para erros HTTP quanto para erros lógicos com 200 OK.
+ */
+function extractGraphqlErrorMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const errors = (payload as { errors?: unknown }).errors;
+  if (!Array.isArray(errors) || errors.length === 0) return null;
+  const parts: string[] = [];
+  for (const e of errors) {
+    if (!e || typeof e !== "object") continue;
+    const message = (e as { message?: unknown }).message;
+    const validation = (e as { extensions?: { validation?: unknown } })
+      .extensions?.validation;
+    if (validation && typeof validation === "object") {
+      const flat = Object.entries(validation as Record<string, unknown>)
+        .flatMap(([field, msgs]) =>
+          Array.isArray(msgs)
+            ? msgs.map((m) => `${field}: ${String(m)}`)
+            : [`${field}: ${String(msgs)}`],
+        )
+        .join(" · ");
+      if (flat) parts.push(flat);
+    } else if (typeof message === "string" && message) {
+      parts.push(message);
+    }
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /**
