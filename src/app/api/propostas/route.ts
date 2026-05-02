@@ -143,7 +143,7 @@ export async function POST(req: Request) {
       valor_total_cents: body.valor_total_cents,
       discount_percent: body.discount_percent,
       status_id: body.status_id,
-      status: "pending",
+      status: "rascunho",
       payment_method: body.payment_method ?? null,
       custom_payment_method: body.custom_payment_method ?? null,
       installments: body.installments ?? null,
