@@ -20,6 +20,10 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
+// PDF gen (Puppeteer cold start + Chromium) + Authentique upload fica
+// facilmente acima dos 10s default da Vercel Hobby. 60s é o teto do
+// plano Hobby; em Pro pode ir até 300s.
+export const maxDuration = 60;
 
 const BodySchema = z.object({
   proposta_id: z.string().uuid(),
