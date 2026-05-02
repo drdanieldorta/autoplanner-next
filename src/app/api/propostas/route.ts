@@ -7,7 +7,6 @@ import {
 } from "@/app/api/_lib/api-helpers";
 import { feegow, FeegowError } from "@/lib/integrations/feegow";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
-import { dispatchWebhook } from "@/lib/integrations/webhook-outbound";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -163,26 +162,9 @@ export async function POST(req: Request) {
 
   // ───────── 3. Authentique em background (Fase 5) ─────────
   // O envio para assinatura digital + geração de PDF + upload Feegow
-  // viram um job de fila quando ativarmos webhook_dlq + Cron Vercel.
-  // Por enquanto a response volta imediato e o caller chama
-  // POST /api/contratos/envio-manual separadamente se quiser disparar
-  // Authentique sem esperar.
+  // ficam a cargo do POST /api/contratos/envio-manual quando o caller
+  // quiser disparar Authentique. A response volta imediato.
   void hasAuthentique;
-
-  // Notifica subscribers externos do tenant (DLQ cuida de retry).
-  await dispatchWebhook({
-    tenantId: auth.user.companyId,
-    event: "proposal.created",
-    payload: {
-      proposta_id: created.id,
-      id_proposta_api,
-      paciente_id: body.paciente_id,
-      paciente_nome: body.paciente_nome,
-      profissional_nome: body.profissional_nome,
-      valor_total_cents: body.valor_total_cents,
-      mode: hasFeegow ? "automatic" : "manual",
-    },
-  });
 
   return NextResponse.json({
     id: created.id,

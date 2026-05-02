@@ -9,7 +9,6 @@ import {
   getCompanyCredentials,
   getPropostaByDocumentId,
 } from "@/lib/integrations/credentials";
-import { dispatchWebhook } from "@/lib/integrations/webhook-outbound";
 
 export const dynamic = "force-dynamic";
 
@@ -117,19 +116,6 @@ export async function POST(req: Request) {
       );
     }
   }
-
-  // Notifica subscribers externos do tenant (DLQ cuida de retry).
-  await dispatchWebhook({
-    tenantId: proposta.company_id,
-    event: "proposta.signed",
-    payload: {
-      proposta_id_api: proposta.id_proposta_api,
-      document_id: documentId,
-      paciente_id: proposta.paciente_id,
-      paciente_nome: proposta.paciente_nome,
-      event_type: eventType,
-    },
-  });
 
   return NextResponse.json({ ok: true });
 }
