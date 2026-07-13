@@ -14,6 +14,12 @@ const nextConfig: NextConfig = {
     "/api/contratos/envio-manual": [
       "./node_modules/@sparticuz/chromium/**/*",
     ],
+    // Download/impressão em PDF (contrato + resumos) — mesma dependência
+    // de Chromium em runtime. Sem esta entrada os binários somem do
+    // /var/task e a rota falha na Vercel.
+    "/api/propostas/[id]/pdf": [
+      "./node_modules/@sparticuz/chromium/**/*",
+    ],
   },
 };
 

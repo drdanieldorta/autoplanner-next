@@ -1,6 +1,10 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # InfinitePlan (Next.js) — pasta nova da migração
 
-Este é o projeto **alvo** da migração do `autoplanner/` (Lovable/Vite). Aqui é onde construímos a versão Next.js 15 + Vercel, absorvendo o que hoje vive no n8n.
+Este é o projeto **alvo** da migração do `autoplanner/` (Lovable/Vite). Aqui é onde construímos a versão Next.js 16 + Vercel, absorvendo o que hoje vive no n8n.
 
 > **Para o panorama completo, decisões e estado do legado, leia [`../autoplanner/CLAUDE.md`](../autoplanner/CLAUDE.md) e os 6 docs em `../autoplanner/docs/`.** Esses docs são fonte da verdade para schema (BD.md), backend dual (backend.md), workflows n8n (N8N.md), integrações (INTEGRACOES.md), termos de domínio (GLOSSARIO.md) e padrões de UI (frontend.md).
 
@@ -20,7 +24,7 @@ Este é o projeto **alvo** da migração do `autoplanner/` (Lovable/Vite). Aqui 
 | Notifs | sonner |
 | PDF | jspdf + html2canvas (será portado quando relevante) |
 
-> **`--legacy-peer-deps` obrigatório** ao rodar `npm install`. Várias deps do shadcn ainda declaram `react ^18` como peer mas rodam fine em React 19. Sem essa flag, npm bloqueia.
+> **`--legacy-peer-deps` obrigatório** ao rodar `npm install`. Várias deps do shadcn ainda declaram `react ^18` como peer mas rodam fine em React 19. Sem essa flag, npm bloqueia. Já existe um `.npmrc` com `legacy-peer-deps=true` na raiz (necessário pro build da Vercel também), então `npm install` puro funciona — mas mantenha a flag em mente ao rodar comandos npm ad-hoc que ignorem o `.npmrc`.
 
 ## Estrutura
 
@@ -95,8 +99,10 @@ autoplanner-next/
 │           └── types.ts          ← types do Supabase (regerar via npm run types:supabase)
 ├── supabase/                     ← cópia verbatim de ../autoplanner/supabase
 │                                   (migrations + functions Deno)
+├── next.config.ts                ← serverExternalPackages + outputFileTracingIncludes p/ Chromium (PDF na Vercel)
 ├── tailwind.config.ts            ← portado do Vite com cores médicas
 ├── postcss.config.js             ← Tailwind 3 + autoprefixer
+├── .npmrc                        ← legacy-peer-deps=true (React 19 + peers shadcn ^18)
 └── components.json               ← shadcn config
 ```
 
@@ -109,6 +115,14 @@ autoplanner-next/
   - Cookie `super_admin` → força role super_admin
   - Sem cookie + tem role super_admin → super_admin precede
   - Cookie `company` (ou sem cookie sem super_admin) → filtra roles na empresa do profile
+
+### Impersonation (super_admin "veste" uma empresa)
+- **`getCurrentUser()` é a única fonte da verdade de role/empresa** e já resolve impersonation — nenhum componente reimplementa isso. Um super_admin pode "entrar" numa empresa cliente pela tela `/admin` (`src/app/(app)/admin/page.tsx`).
+- Server Actions em [src/lib/impersonation.ts](src/lib/impersonation.ts): `startImpersonation(companyId)` valida super_admin **via admin client lendo `user_roles` direto** (ignora impersonation já ativa, então dá pra trocar de empresa sem sair) e seta o cookie HttpOnly `impersonating_company_id`; `stopImpersonation()` limpa.
+- Enquanto o cookie está ativo **e o user é super_admin de fato**, `getCurrentUser()` sobrescreve o retorno: `role` vira `company_admin`, `companyId` vira a empresa impersonada, e expõe `isImpersonating`/`impersonatingCompanyId`. Assim o painel inteiro reaproveita o código de company_admin sem variantes "super_admin only".
+- Cookie de user não-super_admin é **ignorado** — não é escalável forjando o cookie.
+- `<ImpersonationBanner>` (`_components/impersonation-banner.tsx`) mostra a faixa de "saindo como…" quando ativo.
+- **Implicação prática:** ao escrever um guard, prefira `isSuperAdmin`/`isCompanyAdmin` do `CurrentUser` em vez de checar `role === "super_admin"` na mão — durante impersonation o `role` já foi rebaixado de propósito.
 
 ### Acesso ao Supabase
 - **Client Component** (`"use client"`): import `{ createClient } from "@/lib/supabase/client"`. Anon key + RLS.
@@ -129,6 +143,7 @@ Quando regerarmos os types contra a versão atual do SDK, isso pode parar de ser
 Decisão padrão para a Fase 2+:
 - **Server Action**: mutações disparadas por componentes do mesmo domínio (forms internos do painel). Ex: criar protocolo, atualizar contrato, mudar status de orçamento.
 - **Route Handler** (`app/api/*/route.ts`): quando o endpoint precisa ser **chamável por terceiros** (substituição direta dos webhooks n8n) OU quando é um callback externo (Authentique webhook). Ver mapa em [`../autoplanner/docs/N8N.md`](../autoplanner/docs/N8N.md).
+- **Auth em Route Handlers**: os handlers internos reusam a sessão do cookie via helpers em [src/app/api/_lib/api-helpers.ts](src/app/api/_lib/api-helpers.ts) — `requireUserOr401()`, `requireUserWithCompanyOr401()` (garante `companyId`) e `jsonError()`. Use esses no topo do handler em vez de repetir a checagem. Handlers que aceitam caller externo (ex: `POST /api/webhooks/authentique`) **não** usam esses helpers — validam via HMAC.
 
 ### Padrão das listagens (Fase 2)
 Toda página de listagem segue o mesmo esqueleto, validado em 6 telas:
@@ -159,8 +174,8 @@ npm run dev
 # Build de produção (usado no smoke test)
 npm run build
 
-# Lint
-npx eslint .
+# Lint (script do package.json — equivale a `npx eslint .`)
+npm run lint
 
 # Regerar types do Supabase
 npm run types:supabase
@@ -180,6 +195,8 @@ npm install --legacy-peer-deps
   - [x] Empresas CRUD super_admin com 4 tabs (Dados / Funcionários / Ferramentas / CRM). `loadEmpresaDetail` puxa tudo em paralelo (company + profiles + tools + company_tools + company_crm_links). Server Actions: create/update/delete empresa, addFuncionarioToEmpresa (Edge Function `create-employee`), removeFuncionarioFromEmpresa (Edge Function `delete-user`), addToolToEmpresa/removeToolFromEmpresa, linkEmpresaToCrm (`upsert ... onConflict:company_id`). Tab CRM consome `GET /api/crm/empresas` (Helena, já da Fase 4). Listagem ganhou delete. `formatCNPJ` adicionado em `lib/masks.ts`.
   - [~] Webhook outbound — **decisão 2026-05-02: descartado.** Sistema é tudo interno por ora. Removidos `lib/integrations/webhook-outbound.ts`, `/api/cron/webhook-dlq`, `vercel.json` e os 2 `dispatchWebhook` calls em `POST /api/propostas` e callback Authentique. Tabelas `webhook_endpoints` + `webhook_dlq` permanecem no Supabase (sem uso). Re-implementar é trivial — git log tem o histórico se a decisão mudar.
   - [x] Permissões finas em `user_tool_permissions` — `lib/services/user-tools.ts` (listToolsForUser + getFuncionarioToolPermissions). Endpoint `GET /api/funcionarios/[id]/permissions` para lazy-load no dialog. Server Action `setFuncionarioToolPermissions` (delete-then-insert idempotente). Botão `<PermissoesDialog>` na listagem de funcionários (admins recebem botão disabled — acesso implícito). `/minhas-ferramentas` saiu do `<ComingSoon>`: Server Component que para admin lista todas as `company_tools.enabled`, para não-admin filtra por `user_tool_permissions`. Mapa nome→rota replica heurístico do Vite legacy. 33 rotas no build, lint clean.
+  - [x] Download/impressão de PDF do orçamento — `GET /api/propostas/[id]/pdf?tipo=contrato|financeiro|orcamento` gera PDF via Puppeteer. Contrato reusa `lib/contracts/proposta-contract.ts` (`buildContractHtmlForProposta`, extraído de `envio-manual` pra não duplicar — o PDF baixado é idêntico ao enviado à Authentique); resumos usam `lib/orcamentos/pdf-templates.ts`. Client `<DocumentosPdf>` (card "Documentos" em `/orcamentos/[id]`) baixa via `a.download` ou abre inline pra imprimir. Nova rota registrada no `outputFileTracingIncludes`.
+- [x] **Painel super_admin + impersonation** (pós-Fase 5) — tela `/admin` (Server Component, `requireSuperAdmin`) com dashboard de empresas via `lib/services/admin-dashboard.ts` e impersonation ("vestir" uma empresa cliente) via `lib/impersonation.ts` + `<ImpersonationBanner>`. Ver seção **Impersonation** acima. CRM interno renomeado de "Helena" para "MD.IA" no sidebar/UI (integração continua `lib/integrations/helena.ts`). `Dashboard MDIA` no sidebar abre em nova aba (super_admin only).
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
 
 ## Pegadinhas conhecidas
@@ -191,6 +208,7 @@ npm install --legacy-peer-deps
 - **Turbopack panic com CSS** em paths com espaços no Windows pode acontecer (ex: `Projetos Claude\`). Solução: `rm -rf .next` e relaunch, ou rodar com webpack via env. Build de produção não é afetado.
 - **RHF `form.watch()` viola `react-hooks/incompatible-library`.** Usar `// eslint-disable-next-line react-hooks/incompatible-library` na linha. É padrão idiomático do RHF.
 - **Client Components não podem importar de arquivos com `import "server-only"`.** Quando precisar compartilhar uma constante (ex: `CONTRACT_VARIABLES`), extrair para arquivo neutro em `lib/<dominio>/variables.ts`.
+- **PDF/Chromium na Vercel depende de `next.config.ts`.** `serverExternalPackages: ["@sparticuz/chromium", "puppeteer-core"]` impede o bundler de realocar os binários `.br`, e cada rota que gera PDF precisa de uma entrada em `outputFileTracingIncludes` (hoje: `/api/contratos/envio-manual` e `/api/propostas/[id]/pdf`) forçando o file tracer a copiar `node_modules/@sparticuz/chromium/**` pro deployment — os binários são lidos em runtime via `chromium.executablePath()`, nunca por `import`, então o tracer não os enxerga sozinho. Ao adicionar outra rota que gera PDF, replique a entrada ou o Chromium some do `/var/task`. Em dev há fallback pro Chrome local (ver `lib/integrations/pdf.ts`).
 
 ## Onde NÃO criar coisa
 
