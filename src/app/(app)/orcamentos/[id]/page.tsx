@@ -17,6 +17,7 @@ import { PageHeader } from "../../_components/page-header";
 import { DeleteButton } from "../../_components/delete-button";
 import { StatusSelector } from "../_components/status-selector";
 import { ContractActions } from "../_components/contract-actions";
+import { DocumentosPdf } from "../_components/documentos-pdf";
 import { deleteOrcamentoFromForm } from "../actions";
 
 export const metadata = { title: "Orçamento · InfinitePlan" };
@@ -284,6 +285,18 @@ export default async function OrcamentoPage({
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Documentos</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground mb-3">
+            Baixe ou imprima os documentos deste orçamento em PDF.
+          </p>
+          <DocumentosPdf propostaId={proposta.id} />
+        </CardContent>
+      </Card>
     </div>
   );
 }
