@@ -180,7 +180,52 @@ npm install --legacy-peer-deps
   - [x] Empresas CRUD super_admin com 4 tabs (Dados / Funcionários / Ferramentas / CRM). `loadEmpresaDetail` puxa tudo em paralelo (company + profiles + tools + company_tools + company_crm_links). Server Actions: create/update/delete empresa, addFuncionarioToEmpresa (Edge Function `create-employee`), removeFuncionarioFromEmpresa (Edge Function `delete-user`), addToolToEmpresa/removeToolFromEmpresa, linkEmpresaToCrm (`upsert ... onConflict:company_id`). Tab CRM consome `GET /api/crm/empresas` (Helena, já da Fase 4). Listagem ganhou delete. `formatCNPJ` adicionado em `lib/masks.ts`.
   - [~] Webhook outbound — **decisão 2026-05-02: descartado.** Sistema é tudo interno por ora. Removidos `lib/integrations/webhook-outbound.ts`, `/api/cron/webhook-dlq`, `vercel.json` e os 2 `dispatchWebhook` calls em `POST /api/propostas` e callback Authentique. Tabelas `webhook_endpoints` + `webhook_dlq` permanecem no Supabase (sem uso). Re-implementar é trivial — git log tem o histórico se a decisão mudar.
   - [x] Permissões finas em `user_tool_permissions` — `lib/services/user-tools.ts` (listToolsForUser + getFuncionarioToolPermissions). Endpoint `GET /api/funcionarios/[id]/permissions` para lazy-load no dialog. Server Action `setFuncionarioToolPermissions` (delete-then-insert idempotente). Botão `<PermissoesDialog>` na listagem de funcionários (admins recebem botão disabled — acesso implícito). `/minhas-ferramentas` saiu do `<ComingSoon>`: Server Component que para admin lista todas as `company_tools.enabled`, para não-admin filtra por `user_tool_permissions`. Mapa nome→rota replica heurístico do Vite legacy. 33 rotas no build, lint clean.
+- [x] **Fase 5.1: Cronograma de aplicações (enfermagem)** — camada clínica mínima no protocolo (`protocols.cuidados_gerais/sinais_alerta`, `protocol_items.via/cuidados`) + `lib/prescricao/*` (módulos neutros: `projetarPlano` pura, `canonicalJson` para idempotência) + renderizador code-driven `templates/default-execucao.ts` + `POST /api/prescricoes/gerar` e `GET /api/prescricoes/[id]/pdf`. Anexa ao prontuário Feegow via `/patient/upload-base64`, encadeado automaticamente após o envio do contrato. 35 rotas no build. Ver "Cronograma de aplicações" abaixo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
+
+## Cronograma de aplicações (folha de enfermagem)
+
+Segundo documento do sistema, ao lado do contrato. **Derivado, não escrito**:
+`projetarPlano(protocolo, proposta, início)` é uma função pura em módulo neutro
+(`lib/prescricao/project.ts`) que roda idêntica no Client Component (preview) e no
+servidor (PDF) — impossível a tela divergir do papel.
+
+**Não é uma prescrição.** Sob a COFEN 358/2009 "prescrição de enfermagem" é ato privativo
+do enfermeiro; e a camada clínica é mínima de propósito (via + cuidados, **sem dose,
+diluente ou velocidade**). O documento se intitula "Cronograma de aplicações" e o rodapé
+declara o que ele não é. Não incluir dose sem revisitar essa decisão.
+
+**Regras que não podem ser quebradas:**
+- **A folha não carrega dinheiro.** Nenhum `formatBRL`, nenhuma forma de pagamento — ela
+  circula na sala de preparo.
+- **Zero `{{var}}`.** É code-driven. `replaceContractVariables` troca variável ausente por
+  string vazia; um campo clínico que some sem rastro é falha de segurança, não de layout.
+- **Snapshot congelado** em `propostas.prescricao_snapshot`. `updateProtocol` faz
+  delete-then-insert dos itens, então sem snapshot editar um protocolo reescreveria
+  retroativamente toda folha já emitida.
+- **Nada bloqueia a geração.** O envio é encadeado ao contrato; se campo clínico ausente
+  virasse erro, todo protocolo legado (todos têm `via` nula) quebraria "Salvar e enviar
+  contrato". A folha degrada — imprime "— CONFERIR" — em vez de falhar.
+- **Falha da folha nunca derruba o contrato** — `toast.warning`, nunca rollback.
+
+**Ao adicionar coluna em `protocol_items`, ela precisa entrar em QUATRO lugares** ou é
+apagada silenciosamente no primeiro save (delete-then-insert):
+`protocolItemSchema` → `getProtocolById` (select explícito) → `protocolos/[id]/editar`
+(initialValues) → o `map` de items em `updateProtocol`.
+
+**Feegow:** não existe escrita estruturada de prescrição. `/medical-record/*` é todo
+GET-only e `/medical-reports/create` exige `agendamento_id`. O único caminho é anexar PDF
+via `POST /patient/upload-base64`. Idempotência por `sha256(canonicalJson(plano))`, que
+exclui `gerado_em` e `revisao` — incluir `revisao` torna a comparação circular.
+`prescricao_inicio` é persistido na primeira emissão e reusado: se defaultasse para "hoje"
+a cada geração, o mesmo orçamento criaria revisão espúria todo dia, e a Feegow **não expõe
+delete nem replace de anexo**.
+
+⚠️ `uploadBase64ToPatient` valida `success !== true` no envelope — a Feegow devolve erro
+como HTTP 200 com `{"success": false}`. O `fetcher` genérico só lança em `!res.ok`.
+
+⚠️ Toda rota nova que gere PDF precisa de entrada em `outputFileTracingIncludes`
+(`next.config.ts`). Esquecer não quebra `build` nem dev — quebra só em produção.
 
 ## Pegadinhas conhecidas
 

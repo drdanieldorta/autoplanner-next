@@ -10,10 +10,16 @@ const nextConfig: NextConfig = {
   // deployment — eles são lidos em runtime via path resolvido por
   // chromium.executablePath(), nunca via import. Sem isso a pasta
   // bin/ some no /var/task da função serverless.
+  //
+  // ⚠️ REGRA DURA: toda rota nova que gere PDF PRECISA de uma entrada aqui.
+  // Esquecer não quebra `npm run build` nem o dev — quebra só em produção,
+  // com um erro obscuro de executável não encontrado.
   outputFileTracingIncludes: {
     "/api/contratos/envio-manual": [
       "./node_modules/@sparticuz/chromium/**/*",
     ],
+    "/api/prescricoes/gerar": ["./node_modules/@sparticuz/chromium/**/*"],
+    "/api/prescricoes/[id]/pdf": ["./node_modules/@sparticuz/chromium/**/*"],
   },
 };
 

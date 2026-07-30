@@ -30,6 +30,19 @@ export type GeneratePdfOptions = {
   printBackground?: boolean;
   /** margens em CSS (ex: "20mm" ou "0.75in") */
   margin?: { top?: string; right?: string; bottom?: string; left?: string };
+  /**
+   * Cabeçalho/rodapé repetidos em toda página. Usado pela folha de execução
+   * de enfermagem, que é documento clínico e não pode ter página órfã sem
+   * identificação do paciente.
+   *
+   * ⚠️ Ao ligar `displayHeaderFooter`, SEMPRE passe os dois templates. Com
+   * apenas `footerTemplate`, o Chrome injeta o cabeçalho padrão dele (data
+   * de impressão + título do documento) no topo de todas as páginas.
+   * Passar `headerTemplate: "<div></div>"` suprime isso.
+   */
+  displayHeaderFooter?: boolean;
+  headerTemplate?: string;
+  footerTemplate?: string;
 };
 
 export class PdfError extends Error {
@@ -90,7 +103,19 @@ export async function generatePdfFromHtml(
     browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "networkidle0" });
-    const pdf = await page.pdf({ format, printBackground, margin });
+    const pdf = await page.pdf({
+      format,
+      printBackground,
+      margin,
+      ...(options.displayHeaderFooter
+        ? {
+            displayHeaderFooter: true,
+            // Vazio explícito: sem isso o Chrome injeta o cabeçalho dele.
+            headerTemplate: options.headerTemplate ?? "<div></div>",
+            footerTemplate: options.footerTemplate ?? "<div></div>",
+          }
+        : {}),
+    });
     return Buffer.from(pdf);
   } catch (err) {
     throw new PdfError(

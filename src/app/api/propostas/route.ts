@@ -51,6 +51,15 @@ const BodySchema = z.object({
   custom_payment_method: z.string().nullable().optional(),
   installments: z.number().int().nullable().optional(),
   installment_value_cents: z.number().int().nullable().optional(),
+
+  // Alimentam o cronograma de aplicações da enfermagem.
+  paciente_alergias: z.string().nullable().optional(),
+  observacoes: z.string().nullable().optional(),
+  prescricao_inicio: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .optional(),
 });
 
 type Body = z.infer<typeof BodySchema>;
@@ -148,6 +157,9 @@ export async function POST(req: Request) {
       custom_payment_method: body.custom_payment_method ?? null,
       installments: body.installments ?? null,
       installment_value_cents: body.installment_value_cents ?? null,
+      paciente_alergias: body.paciente_alergias?.trim() || null,
+      observacoes: body.observacoes?.trim() || null,
+      prescricao_inicio: body.prescricao_inicio ?? null,
       id_proposta_api,
       user_id: auth.user.id,
       company_id: auth.user.companyId,

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { FileText } from "lucide-react";
 
 import { requireUser } from "@/lib/auth";
+import { isVia } from "@/lib/prescricao/enums";
 import { getProtocolById } from "@/lib/services/protocols";
 import { PageHeader } from "../../../_components/page-header";
 import { ProtocolForm } from "../../_components/protocol-form";
@@ -32,8 +33,15 @@ export default async function Page({
       <ProtocolForm
         mode="edit"
         initialId={protocol.id}
+        // ⚠️ Este map é destrutivo por natureza: `updateProtocol` faz
+        // delete-then-insert dos itens, então TODO campo novo de
+        // protocol_items precisa ser repassado aqui. Um campo esquecido não
+        // fica "sem aparecer no form" — ele é apagado do banco assim que
+        // alguém salvar o protocolo, ainda que só tenha mudado o preço.
         initialValues={{
           name: protocol.name,
+          cuidados_gerais: protocol.cuidados_gerais ?? "",
+          sinais_alerta: protocol.sinais_alerta ?? "",
           items: protocol.items.map((item) => ({
             procedure_id: item.procedure_id,
             procedure_name: item.procedure_name,
@@ -41,6 +49,12 @@ export default async function Page({
             interval_days: item.interval_days ?? 0,
             value_cents: item.value_cents,
             discount_percent: item.discount_percent ?? 0,
+            // `protocol_items.via` é TEXT no banco (CHECK, não enum PG), então
+            // chega como `string | null`. Estreitamos aqui: um valor fora da
+            // união vira null e o form pede para escolher, em vez de vazar
+            // string arbitrária para dentro do schema.
+            via: isVia(item.via) ? item.via : null,
+            cuidados: item.cuidados ?? "",
           })),
         }}
       />

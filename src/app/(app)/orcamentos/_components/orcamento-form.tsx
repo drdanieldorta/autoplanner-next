@@ -54,6 +54,8 @@ type ProtocolItem = {
   interval_days: number;
   value_cents: number;
   discount_percent: number;
+  /** Camada clínica — alimenta o cronograma da enfermagem. */
+  via?: string | null;
 };
 
 type ProtocolOption = {
@@ -90,6 +92,10 @@ export function OrcamentoForm({
   // Itens do protocolo base — derivados do protocolo selecionado (já vêm
   // inline em `protocols`). Não são editáveis na criação do orçamento.
   const [protocolItems, setProtocolItems] = useState<ProtocolItem[]>([]);
+
+  // Itens sem via definida: o cronograma deduz pelo nome e marca para
+  // conferência. Não bloqueia nada — só avisa quem está montando.
+  const protocolSemVia = protocolItems.filter((p) => !p.via);
 
   // Estado do "adicionar procedimento extra" antes de fazer append.
   const [extraProcedureId, setExtraProcedureId] = useState("");
@@ -131,6 +137,9 @@ export function OrcamentoForm({
       custom_payment_method: "",
       installments: null,
       installment_value_cents: null,
+      paciente_alergias: "",
+      observacoes: "",
+      prescricao_inicio: new Date().toISOString().slice(0, 10),
     },
   });
 
@@ -353,6 +362,9 @@ export function OrcamentoForm({
         values.payment_method === "credito"
           ? values.installment_value_cents
           : null,
+      paciente_alergias: values.paciente_alergias?.trim() || null,
+      observacoes: values.observacoes?.trim() || null,
+      prescricao_inicio: values.prescricao_inicio || null,
     };
 
     const shouldSendContract = submitAction === "save_and_send";
@@ -409,8 +421,6 @@ export function OrcamentoForm({
           return;
         }
         toast.success("Orçamento criado e contrato enviado");
-        router.push(`/orcamentos/${propostaId}`);
-        router.refresh();
       } catch {
         toast.error(
           "Orçamento criado, mas erro de rede ao enviar contrato. Reenvie pela tela de detalhes.",
@@ -418,7 +428,62 @@ export function OrcamentoForm({
         );
         router.push(`/orcamentos/${propostaId}`);
         router.refresh();
+        return;
       }
+
+      // Terceira chamada: cronograma de aplicações para a enfermagem.
+      //
+      // Rota SEPARADA de propósito. `envio-manual` já opera no teto de 60s
+      // do plano Hobby com um cold start de Chromium + upload Authentique;
+      // um segundo PDF no mesmo invoke transformaria a rota mais crítica do
+      // sistema na mais frágil. Custo visível: dois toasts em sequência.
+      //
+      // Falha aqui NUNCA derruba o que já deu certo — o orçamento existe e o
+      // contrato já foi assinado/enviado. Mesmo tratamento que a falha do
+      // contrato recebe acima.
+      try {
+        const prescRes = await fetch("/api/prescricoes/gerar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ proposta_id: propostaId }),
+        });
+        if (!prescRes.ok) {
+          const err = (await prescRes
+            .json()
+            .catch(() => ({}))) as { error?: string };
+          toast.warning(
+            `Contrato enviado, mas o cronograma de enfermagem não foi anexado: ${
+              err.error ?? "tente novamente pela tela de detalhes"
+            }`,
+            { duration: 8000 },
+          );
+        } else {
+          const data = (await prescRes.json().catch(() => ({}))) as {
+            feegow?: string;
+            avisos?: Array<{ mensagem: string }>;
+          };
+          if (data.feegow === "enviado") {
+            toast.success("Cronograma de enfermagem anexado ao prontuário");
+          }
+          if (data.avisos?.length) {
+            toast.warning(
+              `Cronograma com ${data.avisos.length} ponto(s) para conferir: ${data.avisos
+                .slice(0, 2)
+                .map((a) => a.mensagem)
+                .join(" ")}`,
+              { duration: 10000 },
+            );
+          }
+        }
+      } catch {
+        toast.warning(
+          "Contrato enviado, mas erro de rede ao gerar o cronograma de enfermagem.",
+          { duration: 8000 },
+        );
+      }
+
+      router.push(`/orcamentos/${propostaId}`);
+      router.refresh();
     });
   });
 
@@ -1040,6 +1105,67 @@ export function OrcamentoForm({
           </div>
         </Card>
       </div>
+
+      {/* Cronograma de aplicações — gerado junto com o contrato e anexado
+          ao prontuário Feegow. Aparece só quando há o que executar. */}
+      {(protocolItems.length > 0 || fields.length > 0) && (
+        <Card className="p-6 space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold">
+              Cronograma de aplicações (enfermagem)
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Gerado automaticamente ao enviar o contrato e anexado ao
+              prontuário do paciente na Feegow.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <Label htmlFor="prescricao_inicio">Início do tratamento</Label>
+              <Input
+                id="prescricao_inicio"
+                type="date"
+                {...form.register("prescricao_inicio")}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                D0 do cronograma. As sessões seguintes usam o intervalo de
+                cada item.
+              </p>
+            </div>
+            <div className="md:col-span-2">
+              <Label htmlFor="paciente_alergias">Alergias relatadas</Label>
+              <Input
+                id="paciente_alergias"
+                placeholder="Ex: dipirona, AAS — deixe em branco se não avaliado"
+                {...form.register("paciente_alergias")}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Em branco, a folha sai com “ALERGIAS NÃO INFORMADAS” e linha
+                para conferência à caneta.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="observacoes">Observações para a enfermagem</Label>
+            <Textarea
+              id="observacoes"
+              rows={2}
+              placeholder="Ex: acesso periférico difícil; paciente ansioso"
+              {...form.register("observacoes")}
+            />
+          </div>
+
+          {protocolSemVia.length > 0 && (
+            <p className="text-xs text-muted-foreground border-l-2 border-muted-foreground/40 pl-2">
+              {protocolSemVia.length} item(ns) do protocolo sem via de
+              administração definida. A folha deduz pelo nome e marca para
+              conferência — defina a via em Protocolos para eliminar o aviso.
+            </p>
+          )}
+        </Card>
+      )}
 
       <div className="flex flex-wrap justify-end gap-3">
         <Button

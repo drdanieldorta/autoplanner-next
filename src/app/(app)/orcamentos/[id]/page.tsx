@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { Calculator } from "lucide-react";
 
 import { requireUser } from "@/lib/auth";
+import { getCredentialsStatus } from "@/lib/services/credentials";
 import { getPropostaById } from "@/lib/services/propostas";
 import { getProtocolById } from "@/lib/services/protocols";
 import { formatCurrency } from "@/lib/currency";
@@ -17,6 +18,7 @@ import { PageHeader } from "../../_components/page-header";
 import { DeleteButton } from "../../_components/delete-button";
 import { StatusSelector } from "../_components/status-selector";
 import { ContractActions } from "../_components/contract-actions";
+import { PrescricaoActions } from "../_components/prescricao-actions";
 import { deleteOrcamentoFromForm } from "../actions";
 
 export const metadata = { title: "Orçamento · InfinitePlan" };
@@ -57,6 +59,13 @@ export default async function OrcamentoPage({
 
   const proposta = await getPropostaById({ id, companyId: user.companyId });
   if (!proposta) notFound();
+
+  // RLS de `api_credentials` bloqueia company_user, então isto pode voltar
+  // null mesmo com a empresa tendo Feegow configurada. Nesse caso assumimos
+  // que existe: dizer "empresa sem token" para quem só não pode ler a tabela
+  // seria mentira. Quem decide de fato é a rota, que lê via service_role.
+  const credStatus = await getCredentialsStatus({ companyId: user.companyId });
+  const temFeegow = credStatus?.hasFeegow ?? true;
 
   const protocol = proposta.protocolo_id
     ? await getProtocolById({
@@ -241,6 +250,24 @@ export default async function OrcamentoPage({
               <ContractActions
                 propostaId={proposta.id}
                 documentId={proposta.document_id ?? null}
+              />
+            </div>
+
+            <div className="pt-3 border-t">
+              <p className="text-sm text-muted-foreground mb-2">
+                Cronograma de aplicações (enfermagem)
+              </p>
+              <PrescricaoActions
+                propostaId={proposta.id}
+                geradaEm={proposta.prescricao_gerada_em ?? null}
+                feegowEm={proposta.prescricao_feegow_em ?? null}
+                erro={proposta.prescricao_erro ?? null}
+                revisao={proposta.prescricao_revisao ?? 0}
+                inicio={proposta.prescricao_inicio ?? null}
+                temFeegow={temFeegow}
+                pacienteManual={
+                  !proposta.paciente_id || proposta.paciente_id === "manual"
+                }
               />
             </div>
 

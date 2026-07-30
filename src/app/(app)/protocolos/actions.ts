@@ -10,6 +10,8 @@ import { protocolItemSchema } from "@/lib/validations";
 
 const CreateSchema = z.object({
   name: z.string().trim().min(3, "Nome deve ter pelo menos 3 caracteres").max(120),
+  cuidados_gerais: z.string().max(2000).nullable().optional(),
+  sinais_alerta: z.string().max(2000).nullable().optional(),
   items: z.array(protocolItemSchema).min(1, "Adicione pelo menos um procedimento"),
 });
 
@@ -21,6 +23,12 @@ export type ProtocolFormState =
   | { ok: true; id: string }
   | { ok: false; error: string }
   | null;
+
+/** Textarea vazia vira NULL, não string vazia — mantém o banco limpo. */
+function nullIfBlank(v: string | null | undefined): string | null {
+  const t = (v ?? "").trim();
+  return t === "" ? null : t;
+}
 
 function calcTotal(items: z.infer<typeof protocolItemSchema>[]): number {
   return items.reduce((sum, item) => {
@@ -53,6 +61,8 @@ export async function createProtocol(
       total_value_cents: totalCents,
       user_id: user.id,
       company_id: user.companyId,
+      cuidados_gerais: nullIfBlank(parsed.data.cuidados_gerais),
+      sinais_alerta: nullIfBlank(parsed.data.sinais_alerta),
     } as never)
     .select("id")
     .single();
@@ -66,6 +76,8 @@ export async function createProtocol(
 
   const items = parsed.data.items.map((item) => ({
     ...item,
+    via: item.via ?? null,
+    cuidados: nullIfBlank(item.cuidados),
     protocol_id: created.id,
   }));
   const itemsResult = await supabase
@@ -100,7 +112,12 @@ export async function updateProtocol(
   const updateResult = await supabase
     .from("protocols")
      
-    .update({ name: parsed.data.name, total_value_cents: totalCents } as never)
+    .update({
+      name: parsed.data.name,
+      total_value_cents: totalCents,
+      cuidados_gerais: nullIfBlank(parsed.data.cuidados_gerais),
+      sinais_alerta: nullIfBlank(parsed.data.sinais_alerta),
+    } as never)
     .eq("id", parsed.data.id)
     .eq("company_id", user.companyId);
   if (updateResult.error) {
@@ -108,6 +125,13 @@ export async function updateProtocol(
   }
 
   // Replace items: delete existing + insert new
+  //
+  // ⚠️ Este delete-then-insert é destrutivo: TODO campo de protocol_items
+  // precisa chegar no map abaixo. Um campo ausente aqui não fica "sem ser
+  // atualizado" — ele é APAGADO, mesmo que o usuário só tenha mexido no
+  // preço. Ao adicionar coluna nova, ela precisa entrar em quatro lugares:
+  // protocolItemSchema, getProtocolById (select), a página de editar
+  // (initialValues) e este map.
   const deleteResult = await supabase
     .from("protocol_items")
     .delete()
@@ -117,6 +141,8 @@ export async function updateProtocol(
   }
   const items = parsed.data.items.map((item) => ({
     ...item,
+    via: item.via ?? null,
+    cuidados: nullIfBlank(item.cuidados),
     protocol_id: parsed.data.id,
   }));
   const insertResult = await supabase

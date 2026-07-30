@@ -1052,6 +1052,7 @@ export type Database = {
           installment_value_cents: number | null
           installments: number | null
           observacoes: string | null
+          paciente_alergias: string | null
           paciente_bairro: string | null
           paciente_cpf: string | null
           paciente_email: string | null
@@ -1060,6 +1061,16 @@ export type Database = {
           paciente_nome: string
           paciente_telefone: string | null
           payment_method: string | null
+          prescricao_envio_iniciado_em: string | null
+          prescricao_erro: string | null
+          prescricao_feegow_em: string | null
+          prescricao_gerada_em: string | null
+          prescricao_gerada_por: string | null
+          prescricao_hash: string | null
+          prescricao_inicio: string | null
+          prescricao_revisao: number
+          prescricao_revisoes: Json
+          prescricao_snapshot: Json | null
           procedimentos_adicionais: Json | null
           profissional_cpf: string | null
           profissional_crm: string | null
@@ -1088,6 +1099,7 @@ export type Database = {
           installment_value_cents?: number | null
           installments?: number | null
           observacoes?: string | null
+          paciente_alergias?: string | null
           paciente_bairro?: string | null
           paciente_cpf?: string | null
           paciente_email?: string | null
@@ -1096,6 +1108,16 @@ export type Database = {
           paciente_nome: string
           paciente_telefone?: string | null
           payment_method?: string | null
+          prescricao_envio_iniciado_em?: string | null
+          prescricao_erro?: string | null
+          prescricao_feegow_em?: string | null
+          prescricao_gerada_em?: string | null
+          prescricao_gerada_por?: string | null
+          prescricao_hash?: string | null
+          prescricao_inicio?: string | null
+          prescricao_revisao?: number
+          prescricao_revisoes?: Json
+          prescricao_snapshot?: Json | null
           procedimentos_adicionais?: Json | null
           profissional_cpf?: string | null
           profissional_crm?: string | null
@@ -1124,6 +1146,7 @@ export type Database = {
           installment_value_cents?: number | null
           installments?: number | null
           observacoes?: string | null
+          paciente_alergias?: string | null
           paciente_bairro?: string | null
           paciente_cpf?: string | null
           paciente_email?: string | null
@@ -1132,6 +1155,16 @@ export type Database = {
           paciente_nome?: string
           paciente_telefone?: string | null
           payment_method?: string | null
+          prescricao_envio_iniciado_em?: string | null
+          prescricao_erro?: string | null
+          prescricao_feegow_em?: string | null
+          prescricao_gerada_em?: string | null
+          prescricao_gerada_por?: string | null
+          prescricao_hash?: string | null
+          prescricao_inicio?: string | null
+          prescricao_revisao?: number
+          prescricao_revisoes?: Json
+          prescricao_snapshot?: Json | null
           procedimentos_adicionais?: Json | null
           profissional_cpf?: string | null
           profissional_crm?: string | null
@@ -1168,6 +1201,7 @@ export type Database = {
       protocol_items: {
         Row: {
           created_at: string | null
+          cuidados: string | null
           discount_percent: number
           id: string
           interval_days: number
@@ -1176,9 +1210,11 @@ export type Database = {
           protocol_id: string
           quantity: number
           value_cents: number
+          via: string | null
         }
         Insert: {
           created_at?: string | null
+          cuidados?: string | null
           discount_percent?: number
           id?: string
           interval_days?: number
@@ -1187,9 +1223,11 @@ export type Database = {
           protocol_id: string
           quantity: number
           value_cents: number
+          via?: string | null
         }
         Update: {
           created_at?: string | null
+          cuidados?: string | null
           discount_percent?: number
           id?: string
           interval_days?: number
@@ -1198,6 +1236,7 @@ export type Database = {
           protocol_id?: string
           quantity?: number
           value_cents?: number
+          via?: string | null
         }
         Relationships: [
           {
@@ -1213,8 +1252,10 @@ export type Database = {
         Row: {
           company_id: string
           created_at: string | null
+          cuidados_gerais: string | null
           id: string
           name: string
+          sinais_alerta: string | null
           total_value_cents: number
           updated_at: string | null
           user_id: string | null
@@ -1222,8 +1263,10 @@ export type Database = {
         Insert: {
           company_id: string
           created_at?: string | null
+          cuidados_gerais?: string | null
           id?: string
           name: string
+          sinais_alerta?: string | null
           total_value_cents?: number
           updated_at?: string | null
           user_id?: string | null
@@ -1231,8 +1274,10 @@ export type Database = {
         Update: {
           company_id?: string
           created_at?: string | null
+          cuidados_gerais?: string | null
           id?: string
           name?: string
+          sinais_alerta?: string | null
           total_value_cents?: number
           updated_at?: string | null
           user_id?: string | null
