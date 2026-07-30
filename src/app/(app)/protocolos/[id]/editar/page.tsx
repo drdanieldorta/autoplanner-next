@@ -3,6 +3,7 @@ import { FileText } from "lucide-react";
 
 import { requireUser } from "@/lib/auth";
 import { getProtocolById } from "@/lib/services/protocols";
+import { loadProtocolFormData } from "@/lib/services/protocol-form-data";
 import { PageHeader } from "../../../_components/page-header";
 import { ProtocolForm } from "../../_components/protocol-form";
 
@@ -18,7 +19,10 @@ export default async function Page({
   if (!user.companyId) notFound();
 
   const { id } = await params;
-  const protocol = await getProtocolById({ id, companyId: user.companyId });
+  const [protocol, formData] = await Promise.all([
+    getProtocolById({ id, companyId: user.companyId }),
+    loadProtocolFormData(user.companyId),
+  ]);
   if (!protocol) notFound();
 
   return (
@@ -32,6 +36,9 @@ export default async function Page({
       <ProtocolForm
         mode="edit"
         initialId={protocol.id}
+        hasFeegow={formData.hasFeegow}
+        feegowError={formData.feegowError}
+        procedures={formData.procedures}
         initialValues={{
           name: protocol.name,
           items: protocol.items.map((item) => ({
