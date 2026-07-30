@@ -19,6 +19,11 @@ import {
   replaceContractVariables,
 } from "@/lib/contracts/render";
 import { renderDefaultSystemContract } from "@/lib/contracts/templates/default-system-contract";
+import {
+  getDocumentBranding,
+  renderBrandingCss,
+  renderBrandingHeader,
+} from "@/lib/branding/document";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -218,9 +223,15 @@ export async function POST(req: Request) {
   //   - Sem contract_id: template do sistema (TCLE completo, code-driven,
   //     com termos condicionais IM/EV/Implante). Não passa por replace
   //     porque já é renderizado direto com os dados.
+  // Identidade visual da empresa (logo + cores). Empresa sem branding
+  // configurado devolve hasBranding=false e o documento sai exatamente
+  // como saía antes — cabeçalho e CSS de marca ficam vazios.
+  const branding = await getDocumentBranding(auth.user.companyId);
+
   const fullHtml = contractContent
-    ? `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Contrato</title></head><body style="font-family:Arial,sans-serif;font-size:12px;line-height:1.55;color:#111;padding:20mm;">${replaceContractVariables(contractContent, variables)}</body></html>`
+    ? `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Contrato</title><style>${renderBrandingCss(branding)}</style></head><body style="font-family:Arial,sans-serif;font-size:12px;line-height:1.55;color:#111;padding:20mm;">${renderBrandingHeader(branding)}${replaceContractVariables(contractContent, variables)}</body></html>`
     : renderDefaultSystemContract({
+        branding,
         paciente_nome: (proposta.paciente_nome as string) ?? "",
         paciente_cpf: (proposta.paciente_cpf as string) ?? "",
         profissional_nome: (proposta.profissional_nome as string) ?? "",

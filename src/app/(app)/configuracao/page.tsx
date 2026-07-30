@@ -2,6 +2,7 @@ import { CheckCircle, Settings, XCircle } from "lucide-react";
 
 import { requireUser } from "@/lib/auth";
 import { getCredentialsStatus } from "@/lib/services/credentials";
+import { getCompanyBranding } from "@/lib/branding/document";
 
 import {
   Card,
@@ -11,6 +12,7 @@ import {
 } from "@/components/ui/card";
 import { PageHeader } from "../_components/page-header";
 import { ConfiguracaoForm } from "./_components/configuracao-form";
+import { BrandingForm } from "./_components/branding-form";
 
 export const metadata = { title: "Configuração · InfinitePlan" };
 export const dynamic = "force-dynamic";
@@ -50,7 +52,10 @@ export default async function ConfiguracaoPage() {
     );
   }
 
-  const status = await getCredentialsStatus({ companyId: user.companyId });
+  const [status, branding] = await Promise.all([
+    getCredentialsStatus({ companyId: user.companyId }),
+    getCompanyBranding(user.companyId),
+  ]);
 
   return (
     <div className="space-y-4 md:space-y-6 p-4 md:p-6">
@@ -112,6 +117,13 @@ export default async function ConfiguracaoPage() {
           )}
         </CardContent>
       </Card>
+
+      <BrandingForm
+        companyName={branding?.companyName ?? ""}
+        logoUrl={branding?.logoUrl ?? null}
+        primaryColor={branding?.primaryColor ?? null}
+        secondaryColor={branding?.secondaryColor ?? null}
+      />
 
       <ConfiguracaoForm
         isSuperAdmin={user.isSuperAdmin}

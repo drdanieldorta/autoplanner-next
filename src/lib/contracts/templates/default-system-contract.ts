@@ -1,6 +1,12 @@
 import "server-only";
 
 import { formatBRL, formatCPF, formatDateExtenso } from "@/lib/contracts/render";
+import {
+  renderBrandingCss,
+  renderBrandingHeader,
+  type DocumentBranding,
+} from "@/lib/branding/document";
+import { resolveDocPalette } from "@/lib/branding/palette";
 
 /**
  * Template HTML do "Contrato padrão do sistema" — TCLE de prestação
@@ -29,17 +35,34 @@ export type DefaultContractContext = {
   custom_payment_method: string | null;
   installments: number | null;
   installment_value_cents: number | null;
+  /** Identidade visual da empresa. Ausente = documento neutro de sempre. */
+  branding?: DocumentBranding;
 };
 
-const css = `
+/**
+ * CSS do documento.
+ *
+ * Sem identidade configurada, cada elemento mantém exatamente a cor que
+ * tinha antes desta feature — empresa que não cadastrou marca continua
+ * gerando o contrato idêntico ao de antes.
+ */
+function buildCss(branding?: DocumentBranding): string {
+  const palette = branding?.palette ?? resolveDocPalette(null, null);
+  const branded = branding?.hasBranding ?? false;
+  const headerBorder = branded ? palette.primary : "#111";
+  const sectionBg = branded ? palette.secondary : "#e5e7eb";
+  const sectionFg = branded ? palette.onSecondary : "#111";
+  const tableHeadBorder = branded ? palette.primary : "#9ca3af";
+
+  return `
   body { font-family: Arial, sans-serif; font-size: 11px; line-height: 1.55; color: #111; padding: 20mm 15mm; }
   h1.header { text-align: center; font-size: 13px; font-weight: bold; letter-spacing: 0.06em; text-transform: uppercase; margin: 0; }
-  .header-wrap { text-align: center; border-bottom: 2px solid #111; padding-bottom: 10px; margin-bottom: 16px; }
+  .header-wrap { text-align: center; border-bottom: 2px solid ${headerBorder}; padding-bottom: 10px; margin-bottom: 16px; }
   .header-meta { margin-top: 6px; font-size: 10px; color: #666; }
   p.intro { font-size: 11px; line-height: 1.55; margin-bottom: 14px; text-align: justify; }
-  .section-title { background: #e5e7eb; padding: 6px 12px; text-align: center; font-weight: bold; font-size: 11px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .section-title { background: ${sectionBg}; color: ${sectionFg}; padding: 6px 12px; text-align: center; font-weight: bold; font-size: 11px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
   table.proc { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 16px; }
-  table.proc th { text-align: left; padding: 6px 0; border-bottom: 2px solid #9ca3af; font-weight: bold; }
+  table.proc th { text-align: left; padding: 6px 0; border-bottom: 2px solid ${tableHeadBorder}; font-weight: bold; }
   table.proc th.qty { text-align: right; width: 100px; }
   table.proc td { padding: 6px 0; border-bottom: 1px solid #e5e7eb; }
   table.proc td.qty { text-align: right; }
@@ -67,7 +90,8 @@ const css = `
   .signature .name { font-weight: bold; text-align: center; font-size: 11px; }
   .signature .meta { text-align: center; font-size: 10px; }
   .signature .role { text-align: center; font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 4px; }
-`;
+${renderBrandingCss(branding ?? { companyName: "", logoDataUri: null, palette, hasBranding: false })}`;
+}
 
 const TERMOS = [
   "1. As datas de realização dos tratamentos serão definidas e informadas ao paciente por meio de comunicação enviada ao telefone informado pelo contratado previamente no momento do agendamento da consulta.",
@@ -266,9 +290,10 @@ export function renderDefaultSystemContract(ctx: DefaultContractContext): string
 <head>
 <meta charset="UTF-8">
 <title>Contrato</title>
-<style>${css}</style>
+<style>${buildCss(ctx.branding)}</style>
 </head>
 <body>
+  ${ctx.branding ? renderBrandingHeader(ctx.branding) : ""}
   <div class="header-wrap">
     <h1 class="header">CONTRATO DE PRESTAÇÃO DE SERVIÇOS EM SAÚDE</h1>
     <div class="header-meta">Emitido em ${dataExtenso}<br/>São Paulo/SP</div>
