@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Calculator, Plus, Edit2 } from "lucide-react";
+import { Calculator, Plus, Edit2, FileText } from "lucide-react";
 
 import { requireUser } from "@/lib/auth";
 import { listPropostas } from "@/lib/services/propostas";
@@ -131,6 +131,20 @@ export default async function OrcamentosPage() {
                       <TableCell>{formatDate(p.created_at)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            asChild
+                            title="Ver contrato"
+                          >
+                            <a
+                              href={`/api/contratos/${p.id}/pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <FileText className="h-4 w-4" />
+                            </a>
+                          </Button>
                           <Button variant="outline" size="sm" asChild>
                             <Link href={`/orcamentos/${p.id}`}>
                               <Edit2 className="h-4 w-4" />
@@ -176,6 +190,15 @@ export default async function OrcamentosPage() {
                   </MobileCardField>
                 </MobileCardBody>
                 <MobileCardActions>
+                  <Button variant="outline" size="sm" asChild title="Ver contrato">
+                    <a
+                      href={`/api/contratos/${p.id}/pdf`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <FileText className="h-4 w-4" />
+                    </a>
+                  </Button>
                   <Button variant="outline" size="sm" asChild>
                     <Link href={`/orcamentos/${p.id}`}>
                       <Edit2 className="h-4 w-4" />

@@ -24,15 +24,6 @@ export type DocumentBranding = {
   hasBranding: boolean;
 };
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 /**
  * Lê a identidade visual da empresa.
  *
@@ -136,17 +127,16 @@ export async function getDocumentBranding(
   };
 }
 
-/** Cabeçalho de marca. String vazia quando não há identidade configurada. */
+/**
+ * Cabeçalho de marca — apenas a logo.
+ *
+ * Sem logo não emitimos nada: uma empresa que configurou só a cor
+ * ganharia uma barra vazia no topo. As cores continuam sendo aplicadas
+ * no resto do documento normalmente.
+ */
 export function renderBrandingHeader(branding: DocumentBranding): string {
-  if (!branding.hasBranding) return "";
-  const logo = branding.logoDataUri
-    ? `<img class="brand-logo" src="${branding.logoDataUri}" alt="" />`
-    : "";
-  const name = branding.companyName
-    ? `<span class="brand-name">${escapeHtml(branding.companyName)}</span>`
-    : "";
-  if (!logo && !name) return "";
-  return `<div class="brand-header">${logo}${name}</div>`;
+  if (!branding.hasBranding || !branding.logoDataUri) return "";
+  return `<div class="brand-header"><img class="brand-logo" src="${branding.logoDataUri}" alt="" /></div>`;
 }
 
 /** CSS do cabeçalho de marca. Vazio quando não há identidade. */
@@ -154,8 +144,7 @@ export function renderBrandingCss(branding: DocumentBranding): string {
   if (!branding.hasBranding) return "";
   const { primary } = branding.palette;
   return `
-  .brand-header { display: flex; align-items: center; gap: 14px; padding-bottom: 12px; margin-bottom: 18px; border-bottom: 3px solid ${primary}; }
-  .brand-logo { max-height: 56px; max-width: 220px; object-fit: contain; }
-  .brand-name { font-size: 15px; font-weight: bold; color: ${primary}; }
+  .brand-header { display: flex; align-items: center; padding-bottom: 12px; margin-bottom: 18px; border-bottom: 3px solid ${primary}; }
+  .brand-logo { max-height: 56px; max-width: 260px; object-fit: contain; }
 `;
 }

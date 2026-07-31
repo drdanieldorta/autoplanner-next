@@ -319,9 +319,12 @@ ${opts.branding ? renderBrandingHeader(opts.branding) : ""}
 
 <div class="head">
   ${
-    // Com cabeçalho de marca, o nome da empresa já aparece acima — repetir
-    // aqui seria ruído. O CNPJ continua, porque é o identificador legal.
-    opts.branding?.hasBranding
+    // O cabeçalho de marca só é emitido quando há LOGO, e desde eec43ab ele
+    // mostra apenas a logo (sem o nome). Então só suprimimos o nome aqui
+    // quando a logo de fato vai ser impressa — senão uma empresa que
+    // configurou só a cor perderia o nome do documento inteiro.
+    // O CNPJ continua sempre, porque é o identificador legal.
+    opts.branding?.hasBranding && opts.branding.logoDataUri
       ? plano.clinica.cnpj
         ? `<div class="clinica">CNPJ ${escapeHtml(plano.clinica.cnpj)}</div>`
         : ""

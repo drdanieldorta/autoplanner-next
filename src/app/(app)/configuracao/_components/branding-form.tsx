@@ -23,7 +23,6 @@ import {
 import { updateBranding, type UpdateBrandingState } from "../actions";
 
 type Props = {
-  companyName: string;
   logoUrl: string | null;
   primaryColor: string | null;
   secondaryColor: string | null;
@@ -40,7 +39,6 @@ function SubmitButton() {
 }
 
 export function BrandingForm({
-  companyName,
   logoUrl,
   primaryColor,
   secondaryColor,
@@ -228,25 +226,24 @@ export function BrandingForm({
               Prévia do cabeçalho do documento
             </Label>
             <div className="mt-2 rounded-lg border bg-white p-6">
-              <div
-                className="flex items-center gap-3 pb-3"
-                style={{ borderBottom: `3px solid ${previewAccent}` }}
-              >
-                {shownLogo && (
-                  // eslint-disable-next-line @next/next/no-img-element
+              {shownLogo ? (
+                <div
+                  className="flex items-center pb-3"
+                  style={{ borderBottom: `3px solid ${previewAccent}` }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={shownLogo}
                     alt=""
-                    className="max-h-12 max-w-[160px] object-contain"
+                    className="max-h-12 max-w-[200px] object-contain"
                   />
-                )}
-                <span
-                  className="text-sm font-bold"
-                  style={{ color: previewAccent }}
-                >
-                  {companyName}
-                </span>
-              </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground pb-3 border-b">
+                  Sem logo, o documento sai sem cabeçalho — as cores
+                  continuam sendo aplicadas.
+                </p>
+              )}
               <div
                 className="mt-3 px-3 py-1.5 text-center text-[11px] font-bold uppercase tracking-wide"
                 style={{

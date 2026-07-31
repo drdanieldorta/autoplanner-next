@@ -162,6 +162,71 @@ export function authentique(token: string) {
       };
       return data.document?.files?.signed ?? null;
     },
+
+    /**
+     * Situação do documento para exibir no painel.
+     *
+     * Lê o estado POR SIGNATÁRIO (`signatures.signed` / `.rejected`),
+     * não a presença do arquivo assinado.
+     *
+     * ⚠️ Não voltar a inferir por `files.signed`: verificado em produção
+     * que esse campo vem preenchido mesmo em documento não assinado, o
+     * que fazia o painel exibir "assinado" para contrato pendente.
+     * `getSignedFileUrl` continua usando esse campo, mas só é chamado
+     * pelo webhook — lá a assinatura já é fato consumado pelo evento.
+     *
+     * `signed: null` significa "não foi possível determinar". Preferimos
+     * admitir isso a chutar um estado: dizer "pendente" para um contrato
+     * assinado (ou o contrário) é pior que dizer "não sei".
+     */
+    async getDocumentInfo(documentId: string): Promise<{
+      signed: boolean | null;
+      rejected: boolean;
+      signingLink: string | null;
+    }> {
+      const id = documentId.replace(/"/g, "");
+      const unknown = { signed: null, rejected: false, signingLink: null };
+
+      try {
+        const query = `query { document(id: "${id}") { id signatures { name action { name } signed { created_at } rejected { created_at } link { short_link } } } }`;
+        const res = await fetchGraphql(JSON.stringify({ query }), {
+          "Content-Type": "application/json",
+        });
+        const doc = (
+          res.data as {
+            document: {
+              signatures?: Array<{
+                action?: { name?: string | null } | null;
+                signed?: { created_at?: string | null } | null;
+                rejected?: { created_at?: string | null } | null;
+                link?: { short_link?: string | null } | null;
+              }> | null;
+            } | null;
+          }
+        ).document;
+
+        const all = doc?.signatures ?? [];
+        if (all.length === 0) return unknown;
+
+        // Só quem precisa assinar conta para o status. Signatário sem
+        // `action` declarada é tratado como signatário.
+        const signers = all.filter(
+          (s) => (s.action?.name ?? "SIGN").toUpperCase() === "SIGN",
+        );
+        const relevant = signers.length > 0 ? signers : all;
+
+        const rejected = relevant.some((s) => !!s.rejected?.created_at);
+        const allSigned = relevant.every((s) => !!s.signed?.created_at);
+
+        return {
+          signed: rejected ? false : allSigned,
+          rejected,
+          signingLink: relevant[0]?.link?.short_link ?? null,
+        };
+      } catch {
+        return unknown;
+      }
+    },
   };
 }
 

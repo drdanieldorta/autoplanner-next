@@ -9,6 +9,7 @@ import {
   getCompanyCredentials,
   getPropostaByDocumentId,
 } from "@/lib/integrations/credentials";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +89,28 @@ export async function POST(req: Request) {
   // Só processa quando o documento foi assinado
   if (eventType !== "signature.accepted" && eventType !== "signed") {
     return NextResponse.json({ ok: true, ignored: eventType });
+  }
+
+  // Carimba a assinatura ANTES de qualquer coisa que possa falhar: o
+  // upload pra Feegow abaixo é best-effort, mas o fato da assinatura já
+  // é definitivo neste ponto. Se a ordem fosse inversa, uma Feegow fora
+  // do ar deixaria o painel sem saber que o contrato foi assinado.
+  //
+  // `.is(null)` mantém idempotente: a Authentique pode repetir o
+  // callback, e queremos preservar o instante da primeira assinatura.
+  try {
+    await createAdminClient()
+      .from("propostas")
+      .update({ contract_signed_at: new Date().toISOString() } as never)
+      .eq("document_id", documentId)
+      .is("contract_signed_at", null);
+  } catch (err) {
+    // Não falha o webhook: a Authentique reenviaria o evento e o painel
+    // ainda consegue descobrir o status consultando a API ao vivo.
+    console.error(
+      "[/webhooks/authentique] Falha ao carimbar contract_signed_at:",
+      err,
+    );
   }
 
   // Se a empresa tem feegow_token, baixa o PDF assinado e anexa ao prontuário
