@@ -12,6 +12,7 @@ import {
   FileText,
   RefreshCw,
   Send,
+  XCircle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -35,11 +36,22 @@ type Props = {
 type ContractStatus = {
   documentId: string | null;
   sentAt: string | null;
+  /** Carimbo do webhook. null nos assinados antes da coluna existir. */
+  signedAt: string | null;
   signingLink: string | null;
-  /** null = não foi possível consultar a Authentique. */
+  /** null = não foi possível determinar o estado na Autentique. */
   signed: boolean | null;
+  /** Algum signatário recusou o documento. */
+  rejected: boolean;
   hasArchive: boolean;
 };
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
 
 export function ContractActions({ propostaId, documentId }: Props) {
   const router = useRouter();
@@ -138,12 +150,7 @@ export function ContractActions({ propostaId, documentId }: Props) {
     );
   }
 
-  const sentAtLabel = status?.sentAt
-    ? new Date(status.sentAt).toLocaleString("pt-BR", {
-        dateStyle: "short",
-        timeStyle: "short",
-      })
-    : null;
+  const sentAtLabel = status?.sentAt ? formatDateTime(status.sentAt) : null;
 
   return (
     <div className="space-y-3">
@@ -154,10 +161,17 @@ export function ContractActions({ propostaId, documentId }: Props) {
           <span className="text-muted-foreground">Assinatura</span>
           {loadingStatus ? (
             <span className="text-muted-foreground">Consultando...</span>
+          ) : status?.rejected ? (
+            <span className="inline-flex items-center gap-1.5 text-destructive font-medium">
+              <XCircle className="h-4 w-4" />
+              Recusado pelo paciente
+            </span>
           ) : status?.signed === true ? (
             <span className="inline-flex items-center gap-1.5 text-success font-medium">
               <Check className="h-4 w-4" />
-              Assinado
+              {status.signedAt
+                ? `Assinado em ${formatDateTime(status.signedAt)}`
+                : "Assinado"}
             </span>
           ) : status?.signed === false ? (
             <span className="inline-flex items-center gap-1.5 text-muted-foreground">

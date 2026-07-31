@@ -166,55 +166,65 @@ export function authentique(token: string) {
     /**
      * Situação do documento para exibir no painel.
      *
-     * `signed` deriva da presença de `files.signed` — campo que já
-     * usamos no webhook, portanto verificado. O `signingLink` vem de
-     * uma query mais rica; se a API recusar esses campos, caímos na
-     * query mínima e devolvemos o link como null em vez de quebrar a
-     * tela inteira.
+     * Lê o estado POR SIGNATÁRIO (`signatures.signed` / `.rejected`),
+     * não a presença do arquivo assinado.
+     *
+     * ⚠️ Não voltar a inferir por `files.signed`: verificado em produção
+     * que esse campo vem preenchido mesmo em documento não assinado, o
+     * que fazia o painel exibir "assinado" para contrato pendente.
+     * `getSignedFileUrl` continua usando esse campo, mas só é chamado
+     * pelo webhook — lá a assinatura já é fato consumado pelo evento.
+     *
+     * `signed: null` significa "não foi possível determinar". Preferimos
+     * admitir isso a chutar um estado: dizer "pendente" para um contrato
+     * assinado (ou o contrário) é pior que dizer "não sei".
      */
     async getDocumentInfo(documentId: string): Promise<{
-      signed: boolean;
-      signedFileUrl: string | null;
+      signed: boolean | null;
+      rejected: boolean;
       signingLink: string | null;
     }> {
       const id = documentId.replace(/"/g, "");
-      const minimal = async () => {
-        const query = `query { document(id: "${id}") { id files { signed } } }`;
-        const res = await fetchGraphql(JSON.stringify({ query }), {
-          "Content-Type": "application/json",
-        });
-        const doc = (
-          res.data as {
-            document: { files?: { signed?: string | null } | null } | null;
-          }
-        ).document;
-        const signedUrl = doc?.files?.signed ?? null;
-        return { signed: !!signedUrl, signedFileUrl: signedUrl, signingLink: null };
-      };
+      const unknown = { signed: null, rejected: false, signingLink: null };
 
       try {
-        const query = `query { document(id: "${id}") { id files { signed } signatures { name link { short_link } } } }`;
+        const query = `query { document(id: "${id}") { id signatures { name action { name } signed { created_at } rejected { created_at } link { short_link } } } }`;
         const res = await fetchGraphql(JSON.stringify({ query }), {
           "Content-Type": "application/json",
         });
         const doc = (
           res.data as {
             document: {
-              files?: { signed?: string | null } | null;
               signatures?: Array<{
+                action?: { name?: string | null } | null;
+                signed?: { created_at?: string | null } | null;
+                rejected?: { created_at?: string | null } | null;
                 link?: { short_link?: string | null } | null;
               }> | null;
             } | null;
           }
         ).document;
-        const signedUrl = doc?.files?.signed ?? null;
+
+        const all = doc?.signatures ?? [];
+        if (all.length === 0) return unknown;
+
+        // Só quem precisa assinar conta para o status. Signatário sem
+        // `action` declarada é tratado como signatário.
+        const signers = all.filter(
+          (s) => (s.action?.name ?? "SIGN").toUpperCase() === "SIGN",
+        );
+        const relevant = signers.length > 0 ? signers : all;
+
+        const rejected = relevant.some((s) => !!s.rejected?.created_at);
+        const allSigned = relevant.every((s) => !!s.signed?.created_at);
+
         return {
-          signed: !!signedUrl,
-          signedFileUrl: signedUrl,
-          signingLink: doc?.signatures?.[0]?.link?.short_link ?? null,
+          signed: rejected ? false : allSigned,
+          rejected,
+          signingLink: relevant[0]?.link?.short_link ?? null,
         };
       } catch {
-        return minimal();
+        return unknown;
       }
     },
   };

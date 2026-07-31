@@ -46,24 +46,36 @@ export async function GET(
   const documentId = (proposta.document_id as string | null) ?? null;
   const storedLink = (proposta.contract_signing_link as string | null) ?? null;
   const sentAt = (proposta.contract_sent_at as string | null) ?? null;
+  const signedAt = (proposta.contract_signed_at as string | null) ?? null;
   const hasArchive = !!(proposta.contract_pdf_path as string | null);
 
-  let signed: boolean | null = null;
+  // Fonte primária: o carimbo do webhook, disparado por um evento real de
+  // assinatura. É definitivo, instantâneo e não depende da Autentique
+  // estar de pé.
+  let signed: boolean | null = signedAt ? true : null;
+  let rejected = false;
   let signingLink = storedLink;
 
-  if (documentId) {
+  // Consulta ao vivo só quando o banco ainda não sabe — contrato ainda
+  // pendente, ou assinado antes da coluna existir.
+  const needsLiveCheck = !signedAt && !!documentId;
+  if (needsLiveCheck || (documentId && !storedLink)) {
     const creds = await getCompanyCredentials(auth.user.companyId);
     if (creds?.authentique_token) {
       try {
         const info = await authentique(
           creds.authentique_token,
         ).getDocumentInfo(documentId);
-        signed = info.signed;
-        // Contratos anteriores a esta feature não têm link guardado —
-        // nesses, o que a Authentique devolver é a única fonte.
+        if (needsLiveCheck) {
+          signed = info.signed;
+          rejected = info.rejected;
+        }
+        // Contratos anteriores ao acervo não têm link guardado —
+        // nesses, o que a Autentique devolver é a única fonte.
         signingLink = storedLink ?? info.signingLink;
       } catch {
-        signed = null;
+        // Mantém `signed` como null: a UI mostra "não foi possível
+        // consultar" em vez de afirmar que está pendente.
       }
     }
   }
@@ -71,8 +83,10 @@ export async function GET(
   return NextResponse.json({
     documentId,
     sentAt,
+    signedAt,
     signingLink,
     signed,
+    rejected,
     hasArchive,
   });
 }
