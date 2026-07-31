@@ -19,6 +19,7 @@ const nextConfig: NextConfig = {
       "./node_modules/@sparticuz/chromium/**/*",
     ],
     "/api/prescricoes/gerar": ["./node_modules/@sparticuz/chromium/**/*"],
+    "/api/prescricoes/enviar": ["./node_modules/@sparticuz/chromium/**/*"],
     "/api/prescricoes/[id]/pdf": ["./node_modules/@sparticuz/chromium/**/*"],
   },
 };

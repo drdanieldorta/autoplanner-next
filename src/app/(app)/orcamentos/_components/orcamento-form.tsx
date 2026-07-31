@@ -431,16 +431,16 @@ export function OrcamentoForm({
         return;
       }
 
-      // Terceira chamada: cronograma de aplicações para a enfermagem.
+      // Terceira chamada: GERA o cronograma da enfermagem — e só isso.
       //
-      // Rota SEPARADA de propósito. `envio-manual` já opera no teto de 60s
-      // do plano Hobby com um cold start de Chromium + upload Authentique;
-      // um segundo PDF no mesmo invoke transformaria a rota mais crítica do
-      // sistema na mais frágil. Custo visível: dois toasts em sequência.
+      // O envio ao prontuário NÃO acontece aqui (decisão 2026-07-31). Anexar
+      // na Feegow é irreversível (não há delete nem replace de anexo), então
+      // precisa de um ato humano depois de alguém ter olhado o documento. O
+      // botão "Enviar ao prontuário" vive na tela de detalhe do orçamento.
       //
       // Falha aqui NUNCA derruba o que já deu certo — o orçamento existe e o
-      // contrato já foi assinado/enviado. Mesmo tratamento que a falha do
-      // contrato recebe acima.
+      // contrato já foi enviado. Mesmo tratamento que a falha do contrato
+      // recebe acima.
       try {
         const prescRes = await fetch("/api/prescricoes/gerar", {
           method: "POST",
@@ -452,28 +452,15 @@ export function OrcamentoForm({
             .json()
             .catch(() => ({}))) as { error?: string };
           toast.warning(
-            `Contrato enviado, mas o cronograma de enfermagem não foi anexado: ${
-              err.error ?? "tente novamente pela tela de detalhes"
+            `Contrato enviado, mas o cronograma de enfermagem não foi gerado: ${
+              err.error ?? "gere pela tela de detalhes"
             }`,
             { duration: 8000 },
           );
         } else {
-          const data = (await prescRes.json().catch(() => ({}))) as {
-            feegow?: string;
-            avisos?: Array<{ mensagem: string }>;
-          };
-          if (data.feegow === "enviado") {
-            toast.success("Cronograma de enfermagem anexado ao prontuário");
-          }
-          if (data.avisos?.length) {
-            toast.warning(
-              `Cronograma com ${data.avisos.length} ponto(s) para conferir: ${data.avisos
-                .slice(0, 2)
-                .map((a) => a.mensagem)
-                .join(" ")}`,
-              { duration: 10000 },
-            );
-          }
+          toast.info("Cronograma de enfermagem gerado — revise e envie ao prontuário.", {
+            duration: 7000,
+          });
         }
       } catch {
         toast.warning(

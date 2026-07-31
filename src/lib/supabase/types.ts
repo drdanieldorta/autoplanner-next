@@ -1066,7 +1066,9 @@ export type Database = {
           prescricao_feegow_em: string | null
           prescricao_gerada_em: string | null
           prescricao_gerada_por: string | null
+          prescricao_ajustes: Json
           prescricao_hash: string | null
+          prescricao_hash_enviado: string | null
           prescricao_inicio: string | null
           prescricao_revisao: number
           prescricao_revisoes: Json
@@ -1113,7 +1115,9 @@ export type Database = {
           prescricao_feegow_em?: string | null
           prescricao_gerada_em?: string | null
           prescricao_gerada_por?: string | null
+          prescricao_ajustes?: Json
           prescricao_hash?: string | null
+          prescricao_hash_enviado?: string | null
           prescricao_inicio?: string | null
           prescricao_revisao?: number
           prescricao_revisoes?: Json
@@ -1160,7 +1164,9 @@ export type Database = {
           prescricao_feegow_em?: string | null
           prescricao_gerada_em?: string | null
           prescricao_gerada_por?: string | null
+          prescricao_ajustes?: Json
           prescricao_hash?: string | null
+          prescricao_hash_enviado?: string | null
           prescricao_inicio?: string | null
           prescricao_revisao?: number
           prescricao_revisoes?: Json

@@ -195,6 +195,24 @@ do enfermeiro; e a camada clínica é mínima de propósito (via + cuidados, **s
 diluente ou velocidade**). O documento se intitula "Cronograma de aplicações" e o rodapé
 declara o que ele não é. Não incluir dose sem revisitar essa decisão.
 
+**Gerar ≠ enviar (2026-07-31).** O PDF nasce automaticamente junto com o
+contrato, mas anexar ao prontuário é **ato explícito**, feito depois de revisar
+em `/orcamentos/[id]/cronograma`. Motivo: a Feegow não expõe delete nem replace
+de anexo — arquivar é irreversível. `POST /api/prescricoes/gerar` NUNCA envia;
+`POST /api/prescricoes/enviar` renderiza **do snapshot** (nunca reprojeta) e é
+o único que fala com a Feegow.
+
+**Revisão é fato do prontuário.** Só incrementa quando um conteúdo diferente do
+último anexado é efetivamente arquivado — por isso `prescricao_hash_enviado` é
+separado de `prescricao_hash`. Gerar e editar não incrementam nada.
+
+**Ajustes por paciente** vivem em `propostas.prescricao_ajustes` como delta
+esparso: `{"<item_ref>": {via, cuidados, sessoes: {"<n>": offset_dias}}}`. A
+chave da sessão é o índice ORIGINAL (estável), enquanto o número impresso é a
+posição cronológica após o remanejo — se a chave mudasse ao reordenar, editar
+duas vezes perderia o primeiro ajuste. A cascata ("empurrar as seguintes") é
+resolvida na UI e gravada como offsets explícitos, para o delta ser auditável.
+
 **Regras que não podem ser quebradas:**
 - **A folha não carrega dinheiro.** Nenhum `formatBRL`, nenhuma forma de pagamento — ela
   circula na sala de preparo.

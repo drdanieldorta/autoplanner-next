@@ -4,7 +4,11 @@ import { createHash } from "node:crypto";
 
 import { canonicalJson } from "@/lib/prescricao/canonical";
 import { projetarPlano, type ItemCru } from "@/lib/prescricao/project";
-import type { PlanoExecucao, RevisaoRegistro } from "@/lib/prescricao/types";
+import type {
+  PlanoExecucao,
+  PrescricaoAjustes,
+  RevisaoRegistro,
+} from "@/lib/prescricao/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -21,9 +25,14 @@ export type PrescricaoFonte = {
   companyId: string;
   pacienteId: string;
   plano: PlanoExecucao;
+  /** Itens crus normalizados — o editor reprojeta no cliente com eles. */
+  itens: ItemCru[];
+  ajustes: PrescricaoAjustes;
   /** Já emitida antes? Governa idempotência e numeração de revisão. */
   anterior: {
     hash: string | null;
+    /** Hash da última revisão efetivamente ANEXADA. */
+    hashEnviado: string | null;
     revisao: number;
     geradaEm: string | null;
     feegowEm: string | null;
@@ -181,8 +190,15 @@ export async function loadPrescricaoFonte(args: {
     ? (revisoesRaw as RevisaoRegistro[])
     : [];
 
+  const ajustesRaw = proposta.prescricao_ajustes;
+  const ajustes: PrescricaoAjustes =
+    ajustesRaw && typeof ajustesRaw === "object" && !Array.isArray(ajustesRaw)
+      ? (ajustesRaw as PrescricaoAjustes)
+      : {};
+
   const anterior = {
     hash: (proposta.prescricao_hash as string | null) ?? null,
+    hashEnviado: (proposta.prescricao_hash_enviado as string | null) ?? null,
     revisao: Number(proposta.prescricao_revisao ?? 0),
     geradaEm: (proposta.prescricao_gerada_em as string | null) ?? null,
     feegowEm: (proposta.prescricao_feegow_em as string | null) ?? null,
@@ -221,6 +237,7 @@ export async function loadPrescricaoFonte(args: {
     // saber se o conteúdo mudou.
     revisao: anterior.revisao,
     gerado_em: new Date().toISOString(),
+    ajustes,
   });
 
   return {
@@ -228,6 +245,8 @@ export async function loadPrescricaoFonte(args: {
     companyId: args.companyId,
     pacienteId: str("paciente_id"),
     plano,
+    itens,
+    ajustes,
     anterior,
   };
 }
@@ -238,34 +257,20 @@ export async function salvarSnapshot(args: {
   companyId: string;
   plano: PlanoExecucao;
   hash: string;
-  revisao: number;
   userId: string | null;
   inicio: string;
-  revisoesAnteriores: RevisaoRegistro[];
 }): Promise<void> {
   const admin = createAdminClient();
 
-  // Histórico APPEND-ONLY: o anexo da revisão anterior continua
-  // permanentemente no prontuário (a Feegow não expõe delete), então
-  // precisamos poder reproduzir o que foi enviado.
-  const revisoes: RevisaoRegistro[] = [
-    ...args.revisoesAnteriores,
-    {
-      revisao: args.revisao,
-      hash: args.hash,
-      gerado_em: args.plano.gerado_em,
-      gerado_por: args.userId,
-      feegow_em: null,
-    },
-  ];
-
+  // NÃO mexe em `prescricao_revisao` nem no histórico: gerar é barato e
+  // reversível, e o usuário pode gerar/editar quantas vezes quiser antes de
+  // arquivar. Revisão é um fato do PRONTUÁRIO — só existe quando algo foi
+  // efetivamente anexado, e por isso só é incrementada em marcarEnvioConcluido.
   const result = await admin
     .from("propostas")
     .update({
       prescricao_snapshot: args.plano,
       prescricao_hash: args.hash,
-      prescricao_revisao: args.revisao,
-      prescricao_revisoes: revisoes,
       prescricao_gerada_em: args.plano.gerado_em,
       prescricao_gerada_por: args.userId,
       prescricao_inicio: args.inicio,
@@ -273,6 +278,29 @@ export async function salvarSnapshot(args: {
     .eq("id", args.propostaId)
     .eq("company_id", args.companyId);
 
+  if (result.error) throw new Error(result.error.message);
+}
+
+/** Grava o delta desta folha. Não regenera nada — quem chama decide. */
+export async function salvarAjustes(args: {
+  propostaId: string;
+  companyId: string;
+  ajustes: PrescricaoAjustes;
+  inicio: string | null;
+  observacoes: string | null;
+  alergias: string | null;
+}): Promise<void> {
+  const admin = createAdminClient();
+  const result = await admin
+    .from("propostas")
+    .update({
+      prescricao_ajustes: args.ajustes,
+      prescricao_inicio: args.inicio,
+      observacoes: args.observacoes?.trim() || null,
+      paciente_alergias: args.alergias?.trim() || null,
+    } as never)
+    .eq("id", args.propostaId)
+    .eq("company_id", args.companyId);
   if (result.error) throw new Error(result.error.message);
 }
 
@@ -302,6 +330,7 @@ export async function marcarEnvioConcluido(args: {
   propostaId: string;
   companyId: string;
   revisao: number;
+  hash: string;
   revisoes: RevisaoRegistro[];
 }): Promise<void> {
   const admin = createAdminClient();
@@ -317,6 +346,8 @@ export async function marcarEnvioConcluido(args: {
       prescricao_feegow_em: agora,
       prescricao_envio_iniciado_em: null,
       prescricao_erro: null,
+      prescricao_revisao: args.revisao,
+      prescricao_hash_enviado: args.hash,
       prescricao_revisoes: revisoes,
     } as never)
     .eq("id", args.propostaId)

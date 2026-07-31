@@ -263,7 +263,11 @@ export default async function OrcamentoPage({
                 feegowEm={proposta.prescricao_feegow_em ?? null}
                 erro={proposta.prescricao_erro ?? null}
                 revisao={proposta.prescricao_revisao ?? 0}
-                inicio={proposta.prescricao_inicio ?? null}
+                jaEnviada={Boolean(proposta.prescricao_hash_enviado)}
+                pendenteEnvio={
+                  (proposta.prescricao_hash ?? null) !==
+                  (proposta.prescricao_hash_enviado ?? null)
+                }
                 temFeegow={temFeegow}
                 pacienteManual={
                   !proposta.paciente_id || proposta.paciente_id === "manual"

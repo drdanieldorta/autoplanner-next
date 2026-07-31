@@ -27,11 +27,29 @@ export type PlanoItemFonte = {
   cuidados: string | null;
 };
 
+/** Ajuste esparso de uma folha — só o que difere do protocolo. */
+export type AjusteItem = {
+  via?: Via | null;
+  cuidados?: string | null;
+  /** índice ORIGINAL da sessão (1-based) → offset em dias a partir do D0. */
+  sessoes?: Record<string, number>;
+};
+
+/** `propostas.prescricao_ajustes`. Chave = `protocol_item.id` | `extra:<i>`. */
+export type PrescricaoAjustes = Record<string, AjusteItem>;
+
 /** Uma ocorrência agendada de um item. */
 export type PlanoSessao = {
-  /** 1-based. */
+  /**
+   * Índice ORIGINAL da sessão (1-based). É a CHAVE do ajuste e não muda
+   * quando as datas são remanejadas — por isso não é o número impresso.
+   */
   n: number;
+  /** Posição cronológica após os ajustes. É este que sai no papel. */
+  ordem: number;
   total: number;
+  /** True quando esta sessão teve a data alterada nesta folha. */
+  ajustada: boolean;
   offset_dias: number;
   /** yyyy-MM-dd */
   data: string;
@@ -47,6 +65,8 @@ export type PlanoSessao = {
 
 export type PlanoItem = PlanoItemFonte & {
   sessoes: PlanoSessao[];
+  /** True quando via ou cuidados foram sobrescritos só nesta folha. */
+  ajustado: boolean;
 };
 
 /** Uma data do cronograma, com tudo que se aplica nela. */

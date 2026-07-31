@@ -10,14 +10,16 @@
  * Toda entrada é argumento.
  */
 
-import { inferVia, type Via } from "./enums";
+import { inferVia, isVia, type Via } from "./enums";
 import type {
+  AjusteItem,
   PlanoDia,
   PlanoExecucao,
   PlanoItem,
   PlanoItemFonte,
   PlanoSessao,
   PlanoAviso,
+  PrescricaoAjustes,
 } from "./types";
 
 /** Item cru, como vem de `protocol_items` ou de `procedimentos_adicionais`. */
@@ -94,31 +96,59 @@ export function normalizarItem(raw: ItemCru): PlanoItemFonte {
  * manda a enfermagem aplicar 3 vezes no D0 como se fossem eventos
  * separados — leitura errada e potencialmente perigosa.
  */
-function expandirSessoes(item: PlanoItemFonte, inicio: Date): PlanoSessao[] {
-  if (item.interval_days === 0) {
-    return [
-      {
-        n: 1,
-        total: 1,
-        offset_dias: 0,
-        data: formatDia(inicio),
-        rotulo: rotuloDia(0),
-        repeticoes: item.quantity,
-      },
-    ];
-  }
+function expandirSessoes(
+  item: PlanoItemFonte,
+  inicio: Date,
+  ajusteSessoes?: Record<string, number>,
+): PlanoSessao[] {
+  const offsetDe = (n: number, padrao: number): { offset: number; ajustada: boolean } => {
+    const bruto = ajusteSessoes?.[String(n)];
+    if (bruto === undefined || bruto === null) return { offset: padrao, ajustada: false };
+    const v = Math.max(0, Math.trunc(Number(bruto)));
+    if (!Number.isFinite(v)) return { offset: padrao, ajustada: false };
+    return { offset: v, ajustada: v !== padrao };
+  };
 
-  return Array.from({ length: item.quantity }, (_, idx) => {
-    const offset = idx * item.interval_days;
-    return {
-      n: idx + 1,
-      total: item.quantity,
-      offset_dias: offset,
-      data: formatDia(addDias(inicio, offset)),
-      rotulo: rotuloDia(offset),
-      repeticoes: 1,
-    };
-  });
+  const brutas: PlanoSessao[] =
+    item.interval_days === 0
+      ? (() => {
+          const { offset, ajustada } = offsetDe(1, 0);
+          return [
+            {
+              n: 1,
+              ordem: 1,
+              total: 1,
+              ajustada,
+              offset_dias: offset,
+              data: formatDia(addDias(inicio, offset)),
+              rotulo: rotuloDia(offset),
+              repeticoes: item.quantity,
+            },
+          ];
+        })()
+      : Array.from({ length: item.quantity }, (_, idx) => {
+          const n = idx + 1;
+          const { offset, ajustada } = offsetDe(n, idx * item.interval_days);
+          return {
+            n,
+            ordem: n,
+            total: item.quantity,
+            ajustada,
+            offset_dias: offset,
+            data: formatDia(addDias(inicio, offset)),
+            rotulo: rotuloDia(offset),
+            repeticoes: 1,
+          };
+        });
+
+  // Reordena por data e RENUMERA para exibição. A enfermeira lê a folha
+  // cronologicamente, então "2/6" tem que significar "a segunda a acontecer".
+  // O índice original (`n`) é preservado porque é a chave do ajuste — se ele
+  // mudasse ao remanejar, editar duas vezes perderia o primeiro ajuste.
+  return brutas
+    .slice()
+    .sort((a, b) => a.offset_dias - b.offset_dias || a.n - b.n)
+    .map((sessao, i) => ({ ...sessao, ordem: i + 1 }));
 }
 
 export type ProjetarInput = {
@@ -134,6 +164,8 @@ export type ProjetarInput = {
   revisao: number;
   /** ISO. Injetado pelo caller — a função permanece pura. */
   gerado_em: string;
+  /** Delta esparso desta folha. Vazio ⇒ projeção pura do protocolo. */
+  ajustes?: PrescricaoAjustes;
 };
 
 export function projetarPlano(input: ProjetarInput): PlanoExecucao {
@@ -144,12 +176,37 @@ export function projetarPlano(input: ProjetarInput): PlanoExecucao {
 
   // Ordem = ordem em que os itens foram cadastrados no protocolo, que é a
   // ordem exibida no form. Sem coluna `ordem` no banco (escopo mínimo).
+  const ajustes = input.ajustes ?? {};
   const fontes = input.itens.map(normalizarItem);
 
-  const itens: PlanoItem[] = fontes.map((fonte) => ({
-    ...fonte,
-    sessoes: expandirSessoes(fonte, inicioDate),
-  }));
+  const itens: PlanoItem[] = fontes.map((fonte) => {
+    const aj: AjusteItem | undefined = ajustes[fonte.ref];
+
+    // Via e cuidados sobrescritos valem SÓ nesta folha — o protocolo não é
+    // tocado. Uma via ajustada deixa de ser "inferida": foi escolhida por
+    // alguém, não deduzida do nome.
+    const viaAjustada = aj && "via" in aj && isVia(aj.via) ? aj.via : null;
+    const cuidadosAjustados =
+      aj && typeof aj.cuidados === "string" ? aj.cuidados.trim() : null;
+
+    const comAjuste: PlanoItemFonte = {
+      ...fonte,
+      via: viaAjustada ?? fonte.via,
+      via_inferida: viaAjustada ? false : fonte.via_inferida,
+      cuidados: cuidadosAjustados || fonte.cuidados,
+    };
+
+    const sessoes = expandirSessoes(comAjuste, inicioDate, aj?.sessoes);
+
+    return {
+      ...comAjuste,
+      sessoes,
+      ajustado:
+        Boolean(viaAjustada) ||
+        Boolean(cuidadosAjustados) ||
+        sessoes.some((x) => x.ajustada),
+    };
+  });
 
   // Agenda: agrupa por offset, preservando a ordem dos itens dentro do dia.
   const porOffset = new Map<number, PlanoDia>();
@@ -171,7 +228,7 @@ export function projetarPlano(input: ProjetarInput): PlanoExecucao {
         via: item.via,
         via_inferida: item.via_inferida,
         cuidados: item.cuidados,
-        sessao: `${sessao.n}/${sessao.total}`,
+        sessao: `${sessao.ordem}/${sessao.total}`,
         repeticoes: sessao.repeticoes,
       });
     }
@@ -213,8 +270,30 @@ export function projetarPlano(input: ProjetarInput): PlanoExecucao {
  * "Salvar e enviar contrato" no dia 1. A folha DEGRADA — imprime "—" e
  * marca para conferência — em vez de falhar.
  */
-export function avisosDoPlano(plano: PlanoExecucao): PlanoAviso[] {
+export function avisosDoPlano(
+  plano: PlanoExecucao,
+  ajustes?: PrescricaoAjustes,
+): PlanoAviso[] {
   const avisos: PlanoAviso[] = [];
+
+  // Ajuste órfão: a chave é o id do item do protocolo, e `updateProtocol`
+  // recria esses ids no delete-then-insert. Se o protocolo mudou depois do
+  // ajuste, o remanejo some. Isso PRECISA aparecer — um cronograma que
+  // silenciosamente volta ao padrão é exatamente como esse tipo de bug vira
+  // erro clínico.
+  if (ajustes) {
+    const refsVivos = new Set(plano.itens.map((i) => i.ref));
+    for (const ref of Object.keys(ajustes)) {
+      if (!refsVivos.has(ref)) {
+        avisos.push({
+          ref,
+          campo: "ajuste_orfao",
+          mensagem:
+            "Um ajuste desta folha foi perdido porque o protocolo mudou. Revise o cronograma.",
+        });
+      }
+    }
+  }
 
   if (!plano.paciente.alergias?.trim()) {
     avisos.push({
@@ -239,6 +318,25 @@ export function avisosDoPlano(plano: PlanoExecucao): PlanoAviso[] {
   }
 
   for (const item of plano.itens) {
+    // Duas sessões do MESMO item no mesmo dia. Acontece legitimamente ao
+    // remanejar (a sessão movida pode cair em cima de outra), mas significa
+    // administrar o mesmo item duas vezes numa visita — a equipe precisa
+    // confirmar que é intencional, não descobrir na hora do preparo.
+    const porDia = new Map<string, number>();
+    for (const s of item.sessoes) {
+      porDia.set(s.data, (porDia.get(s.data) ?? 0) + 1);
+    }
+    for (const [data, n] of porDia) {
+      if (n > 1) {
+        const [y, m, d] = data.split("-");
+        avisos.push({
+          ref: item.ref,
+          campo: "sessoes_no_mesmo_dia",
+          mensagem: `"${item.procedure_name}": ${n} sessões caem em ${d}/${m}/${y}. Confirme se é intencional.`,
+        });
+      }
+    }
+
     if (!item.via) {
       avisos.push({
         ref: item.ref,
