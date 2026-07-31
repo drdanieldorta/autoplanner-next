@@ -119,7 +119,6 @@ export default async function ConfiguracaoPage() {
       </Card>
 
       <BrandingForm
-        companyName={branding?.companyName ?? ""}
         logoUrl={branding?.logoUrl ?? null}
         primaryColor={branding?.primaryColor ?? null}
         secondaryColor={branding?.secondaryColor ?? null}
