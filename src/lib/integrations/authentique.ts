@@ -162,6 +162,61 @@ export function authentique(token: string) {
       };
       return data.document?.files?.signed ?? null;
     },
+
+    /**
+     * Situação do documento para exibir no painel.
+     *
+     * `signed` deriva da presença de `files.signed` — campo que já
+     * usamos no webhook, portanto verificado. O `signingLink` vem de
+     * uma query mais rica; se a API recusar esses campos, caímos na
+     * query mínima e devolvemos o link como null em vez de quebrar a
+     * tela inteira.
+     */
+    async getDocumentInfo(documentId: string): Promise<{
+      signed: boolean;
+      signedFileUrl: string | null;
+      signingLink: string | null;
+    }> {
+      const id = documentId.replace(/"/g, "");
+      const minimal = async () => {
+        const query = `query { document(id: "${id}") { id files { signed } } }`;
+        const res = await fetchGraphql(JSON.stringify({ query }), {
+          "Content-Type": "application/json",
+        });
+        const doc = (
+          res.data as {
+            document: { files?: { signed?: string | null } | null } | null;
+          }
+        ).document;
+        const signedUrl = doc?.files?.signed ?? null;
+        return { signed: !!signedUrl, signedFileUrl: signedUrl, signingLink: null };
+      };
+
+      try {
+        const query = `query { document(id: "${id}") { id files { signed } signatures { name link { short_link } } } }`;
+        const res = await fetchGraphql(JSON.stringify({ query }), {
+          "Content-Type": "application/json",
+        });
+        const doc = (
+          res.data as {
+            document: {
+              files?: { signed?: string | null } | null;
+              signatures?: Array<{
+                link?: { short_link?: string | null } | null;
+              }> | null;
+            } | null;
+          }
+        ).document;
+        const signedUrl = doc?.files?.signed ?? null;
+        return {
+          signed: !!signedUrl,
+          signedFileUrl: signedUrl,
+          signingLink: doc?.signatures?.[0]?.link?.short_link ?? null,
+        };
+      } catch {
+        return minimal();
+      }
+    },
   };
 }
 
