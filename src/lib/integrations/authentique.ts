@@ -215,6 +215,50 @@ export function authentique(token: string) {
      * admitir isso a chutar um estado: dizer "pendente" para um contrato
      * assinado (ou o contrário) é pior que dizer "não sei".
      */
+    /**
+     * URLs (temporárias) dos arquivos do documento na Autentique.
+     *
+     * Usado para servir o arquivo EXATO nos contratos enviados antes de
+     * existir o acervo local — melhor que regerar, porque regeração
+     * reflete o template e os dados de hoje, não os do dia do envio.
+     *
+     * `pades` é a versão com assinatura digital padrão PAdES; `signed`
+     * é o PDF com a página de assinaturas; `original` é o que foi
+     * enviado. Nunca joga — sem os arquivos, o caller regenera.
+     */
+    async getDocumentFiles(documentId: string): Promise<{
+      original: string | null;
+      signed: string | null;
+      pades: string | null;
+    }> {
+      const id = documentId.replace(/"/g, "");
+      const empty = { original: null, signed: null, pades: null };
+      try {
+        const query = `query { document(id: "${id}") { id files { original signed pades } } }`;
+        const res = await fetchGraphql(JSON.stringify({ query }), {
+          "Content-Type": "application/json",
+        });
+        const files = (
+          res.data as {
+            document: {
+              files?: {
+                original?: string | null;
+                signed?: string | null;
+                pades?: string | null;
+              } | null;
+            } | null;
+          }
+        ).document?.files;
+        return {
+          original: files?.original ?? null,
+          signed: files?.signed ?? null,
+          pades: files?.pades ?? null,
+        };
+      } catch {
+        return empty;
+      }
+    },
+
     async getDocumentInfo(documentId: string): Promise<DocumentInfo> {
       const id = documentId.replace(/"/g, "");
       const unknown: DocumentInfo = {

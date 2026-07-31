@@ -6,8 +6,32 @@ import {
 } from "@/app/api/_lib/api-helpers";
 import { buildContractHtml } from "@/lib/contracts/build-html";
 import { readContractPdf } from "@/lib/contracts/archive";
+import { authentique } from "@/lib/integrations/authentique";
+import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { generatePdfFromHtml } from "@/lib/integrations/pdf";
 import { createAdminClient } from "@/lib/supabase/admin";
+
+/**
+ * Baixa um PDF de URL temporária da Autentique. Devolve null em
+ * qualquer falha — o caller tem a regeração como último recurso, então
+ * não vale derrubar a request por causa de um link expirado.
+ */
+async function fetchRemotePdf(url: string): Promise<Buffer | null> {
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    // Guarda contra página de erro HTML devolvida com 200.
+    if (buf.byteLength === 0) return null;
+    if (buf.subarray(0, 5).toString("latin1") !== "%PDF-") return null;
+    return buf;
+  } catch {
+    return null;
+  }
+}
 
 export const dynamic = "force-dynamic";
 // Pode cair no caminho de regeração (Puppeteer + Chromium cold start).
@@ -64,7 +88,37 @@ export async function GET(
 
   const archivedPath = (proposta.contract_pdf_path as string | null) ?? null;
   let pdf = archivedPath ? await readContractPdf(archivedPath) : null;
-  let source = pdf ? "archived" : "regenerated";
+  let source = pdf ? "archived" : "";
+
+  // Sem acervo local (contratos anteriores a essa feature): busca o
+  // arquivo real na Autentique antes de cair na regeração. Preferimos
+  // `pades`/`signed` quando existem, porque carregam a evidência de
+  // assinatura; `original` é o que foi de fato enviado ao paciente.
+  // Qualquer um dos três é melhor que regerar, que reflete o template e
+  // os dados de HOJE — não os do dia do envio.
+  const documentId = (proposta.document_id as string | null) ?? null;
+  if (!pdf && documentId) {
+    const creds = await getCompanyCredentials(auth.user.companyId);
+    if (creds?.authentique_token) {
+      const files = await authentique(
+        creds.authentique_token,
+      ).getDocumentFiles(documentId);
+      const candidatos: Array<[string, string | null]> = [
+        ["autentique-pades", files.pades],
+        ["autentique-signed", files.signed],
+        ["autentique-original", files.original],
+      ];
+      for (const [label, url] of candidatos) {
+        if (!url) continue;
+        const fetched = await fetchRemotePdf(url);
+        if (fetched) {
+          pdf = fetched;
+          source = label;
+          break;
+        }
+      }
+    }
+  }
 
   if (!pdf) {
     const built = await buildContractHtml({
