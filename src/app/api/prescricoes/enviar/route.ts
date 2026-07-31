@@ -151,7 +151,7 @@ export async function POST(req: Request) {
         displayHeaderFooter: true,
         headerTemplate: "<div></div>",
         footerTemplate: footerTemplateFor(planoFinal),
-        margin: { top: "12mm", right: "0mm", bottom: "14mm", left: "0mm" },
+        margin: { top: "14mm", right: "12mm", bottom: "18mm", left: "12mm" },
       },
     );
   } catch (err) {
