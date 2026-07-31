@@ -5,7 +5,10 @@ import {
   jsonError,
   requireUserWithCompanyOr401,
 } from "@/app/api/_lib/api-helpers";
-import { authentique } from "@/lib/integrations/authentique";
+import {
+  authentique,
+  type DocumentSignatureStatus,
+} from "@/lib/integrations/authentique";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -52,12 +55,16 @@ export async function GET(
   // Fonte primária: o carimbo do webhook, disparado por um evento real de
   // assinatura. É definitivo, instantâneo e não depende da Autentique
   // estar de pé.
-  let signed: boolean | null = signedAt ? true : null;
-  let rejected = false;
+  let status: DocumentSignatureStatus | null = signedAt ? "signed" : null;
+  let effectiveSignedAt = signedAt;
+  let viewedAt: string | null = null;
+  let rejectedAt: string | null = null;
+  let rejectedReason: string | null = null;
   let signingLink = storedLink;
 
-  // Consulta ao vivo só quando o banco ainda não sabe — contrato ainda
-  // pendente, ou assinado antes da coluna existir.
+  // Consulta ao vivo quando o banco ainda não sabe o desfecho — contrato
+  // pendente, recusado, ou assinado antes da coluna existir. Também
+  // quando falta o link (contratos anteriores ao acervo).
   const needsLiveCheck = !signedAt && !!documentId;
   if (needsLiveCheck || (documentId && !storedLink)) {
     const creds = await getCompanyCredentials(auth.user.companyId);
@@ -67,14 +74,15 @@ export async function GET(
           creds.authentique_token,
         ).getDocumentInfo(documentId);
         if (needsLiveCheck) {
-          signed = info.signed;
-          rejected = info.rejected;
+          status = info.status;
+          effectiveSignedAt = info.signedAt;
+          viewedAt = info.viewedAt;
+          rejectedAt = info.rejectedAt;
+          rejectedReason = info.rejectedReason;
         }
-        // Contratos anteriores ao acervo não têm link guardado —
-        // nesses, o que a Autentique devolver é a única fonte.
         signingLink = storedLink ?? info.signingLink;
       } catch {
-        // Mantém `signed` como null: a UI mostra "não foi possível
+        // Mantém `status` como null: a UI mostra "não foi possível
         // consultar" em vez de afirmar que está pendente.
       }
     }
@@ -83,10 +91,12 @@ export async function GET(
   return NextResponse.json({
     documentId,
     sentAt,
-    signedAt,
+    status,
+    signedAt: effectiveSignedAt,
+    viewedAt,
+    rejectedAt,
+    rejectedReason,
     signingLink,
-    signed,
-    rejected,
     hasArchive,
   });
 }

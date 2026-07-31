@@ -8,10 +8,12 @@ import {
   Clock,
   Copy,
   Download,
+  Eye,
   FileSignature,
   FileText,
   RefreshCw,
   Send,
+  ShieldCheck,
   XCircle,
 } from "lucide-react";
 
@@ -33,16 +35,24 @@ type Props = {
   documentId: string | null;
 };
 
+type SignatureStatus =
+  | "signed"
+  | "pending_biometric"
+  | "rejected"
+  | "biometric_rejected"
+  | "viewed"
+  | "pending";
+
 type ContractStatus = {
   documentId: string | null;
   sentAt: string | null;
-  /** Carimbo do webhook. null nos assinados antes da coluna existir. */
-  signedAt: string | null;
-  signingLink: string | null;
   /** null = não foi possível determinar o estado na Autentique. */
-  signed: boolean | null;
-  /** Algum signatário recusou o documento. */
-  rejected: boolean;
+  status: SignatureStatus | null;
+  signedAt: string | null;
+  viewedAt: string | null;
+  rejectedAt: string | null;
+  rejectedReason: string | null;
+  signingLink: string | null;
   hasArchive: boolean;
 };
 
@@ -51,6 +61,71 @@ function formatDateTime(iso: string): string {
     dateStyle: "short",
     timeStyle: "short",
   });
+}
+
+/**
+ * Estado da assinatura. `status: null` (não consultável) é exibido como
+ * tal, nunca como "pendente" — afirmar o estado errado é pior que
+ * admitir que não sabemos.
+ */
+function SignatureBadge({ status }: { status: ContractStatus | null }) {
+  switch (status?.status) {
+    case "signed":
+      return (
+        <span className="inline-flex items-center gap-1.5 text-success font-medium">
+          <Check className="h-4 w-4" />
+          {status.signedAt
+            ? `Assinado em ${formatDateTime(status.signedAt)}`
+            : "Assinado"}
+        </span>
+      );
+    case "pending_biometric":
+      return (
+        <span className="inline-flex items-center gap-1.5 text-accent-gold font-medium">
+          <ShieldCheck className="h-4 w-4" />
+          Assinado — aguardando biometria
+        </span>
+      );
+    case "rejected":
+      return (
+        <span
+          className="inline-flex items-center gap-1.5 text-destructive font-medium"
+          title={status.rejectedReason ?? undefined}
+        >
+          <XCircle className="h-4 w-4" />
+          {status.rejectedAt
+            ? `Recusado em ${formatDateTime(status.rejectedAt)}`
+            : "Recusado pelo paciente"}
+        </span>
+      );
+    case "biometric_rejected":
+      return (
+        <span className="inline-flex items-center gap-1.5 text-destructive font-medium">
+          <XCircle className="h-4 w-4" />
+          Biometria recusada
+        </span>
+      );
+    case "viewed":
+      return (
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+          <Eye className="h-4 w-4" />
+          {status.viewedAt
+            ? `Visualizado em ${formatDateTime(status.viewedAt)}, não assinado`
+            : "Visualizado, não assinado"}
+        </span>
+      );
+    case "pending":
+      return (
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+          <Clock className="h-4 w-4" />
+          Aguardando — ainda não aberto
+        </span>
+      );
+    default:
+      return (
+        <span className="text-muted-foreground">Não foi possível consultar</span>
+      );
+  }
 }
 
 export function ContractActions({ propostaId, documentId }: Props) {
@@ -161,27 +236,8 @@ export function ContractActions({ propostaId, documentId }: Props) {
           <span className="text-muted-foreground">Assinatura</span>
           {loadingStatus ? (
             <span className="text-muted-foreground">Consultando...</span>
-          ) : status?.rejected ? (
-            <span className="inline-flex items-center gap-1.5 text-destructive font-medium">
-              <XCircle className="h-4 w-4" />
-              Recusado pelo paciente
-            </span>
-          ) : status?.signed === true ? (
-            <span className="inline-flex items-center gap-1.5 text-success font-medium">
-              <Check className="h-4 w-4" />
-              {status.signedAt
-                ? `Assinado em ${formatDateTime(status.signedAt)}`
-                : "Assinado"}
-            </span>
-          ) : status?.signed === false ? (
-            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <Clock className="h-4 w-4" />
-              Aguardando assinatura
-            </span>
           ) : (
-            <span className="text-muted-foreground">
-              Não foi possível consultar
-            </span>
+            <SignatureBadge status={status} />
           )}
         </div>
 

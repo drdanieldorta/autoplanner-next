@@ -49,6 +49,42 @@ type SignerInput = {
   action?: "SIGN" | "ACCEPT" | "WITNESS";
 };
 
+/**
+ * Situação consolidada do documento, derivada do estado por signatário.
+ * Ordem de precedência ao consolidar: recusa > biometria recusada >
+ * assinado > pendente de biometria > visualizado > pendente.
+ */
+export type DocumentSignatureStatus =
+  | "signed"
+  | "pending_biometric"
+  | "rejected"
+  | "biometric_rejected"
+  | "viewed"
+  | "pending";
+
+export type DocumentInfo = {
+  /** null = não foi possível determinar (query falhou ou sem signatários). */
+  status: DocumentSignatureStatus | null;
+  signedAt: string | null;
+  viewedAt: string | null;
+  rejectedAt: string | null;
+  rejectedReason: string | null;
+  signingLink: string | null;
+};
+
+/** Shape cru de `document.signatures` no GraphQL da Autentique. */
+type RawSignature = {
+  action?: { name?: string | null } | null;
+  link?: { short_link?: string | null } | null;
+  viewed?: { created_at?: string | null } | null;
+  signed?: { created_at?: string | null } | null;
+  rejected?: { created_at?: string | null; reason?: string | null } | null;
+  signed_unapproved?: { created_at?: string | null } | null;
+  biometric_rejected?: { created_at?: string | null } | null;
+};
+
+type RawDocument = { signatures?: RawSignature[] | null };
+
 export function authentique(token: string) {
   if (!token) {
     throw new AuthentiqueError(401, null, "Token Authentique ausente");
@@ -179,31 +215,23 @@ export function authentique(token: string) {
      * admitir isso a chutar um estado: dizer "pendente" para um contrato
      * assinado (ou o contrário) é pior que dizer "não sei".
      */
-    async getDocumentInfo(documentId: string): Promise<{
-      signed: boolean | null;
-      rejected: boolean;
-      signingLink: string | null;
-    }> {
+    async getDocumentInfo(documentId: string): Promise<DocumentInfo> {
       const id = documentId.replace(/"/g, "");
-      const unknown = { signed: null, rejected: false, signingLink: null };
+      const unknown: DocumentInfo = {
+        status: null,
+        signedAt: null,
+        viewedAt: null,
+        rejectedAt: null,
+        rejectedReason: null,
+        signingLink: null,
+      };
 
       try {
-        const query = `query { document(id: "${id}") { id signatures { name action { name } signed { created_at } rejected { created_at } link { short_link } } } }`;
+        const query = `query { document(id: "${id}") { id signatures { name action { name } link { short_link } viewed { created_at } signed { created_at } rejected { created_at reason } signed_unapproved { created_at } biometric_rejected { created_at } } } }`;
         const res = await fetchGraphql(JSON.stringify({ query }), {
           "Content-Type": "application/json",
         });
-        const doc = (
-          res.data as {
-            document: {
-              signatures?: Array<{
-                action?: { name?: string | null } | null;
-                signed?: { created_at?: string | null } | null;
-                rejected?: { created_at?: string | null } | null;
-                link?: { short_link?: string | null } | null;
-              }> | null;
-            } | null;
-          }
-        ).document;
+        const doc = (res.data as { document: RawDocument | null }).document;
 
         const all = doc?.signatures ?? [];
         if (all.length === 0) return unknown;
@@ -215,12 +243,47 @@ export function authentique(token: string) {
         );
         const relevant = signers.length > 0 ? signers : all;
 
-        const rejected = relevant.some((s) => !!s.rejected?.created_at);
+        const rejectedSig = relevant.find((s) => s.rejected?.created_at);
+        const bioRejectedSig = relevant.find(
+          (s) => s.biometric_rejected?.created_at,
+        );
         const allSigned = relevant.every((s) => !!s.signed?.created_at);
+        // Assinou mas a biometria ainda não foi aprovada. Sem tratar
+        // isso, o painel diria "aguardando assinatura" para quem já
+        // assinou.
+        const pendingBiometric = relevant.some(
+          (s) => s.signed_unapproved?.created_at && !s.signed?.created_at,
+        );
+        const viewedSig = relevant.find((s) => s.viewed?.created_at);
+
+        const status: DocumentSignatureStatus = rejectedSig
+          ? "rejected"
+          : bioRejectedSig
+            ? "biometric_rejected"
+            : allSigned
+              ? "signed"
+              : pendingBiometric
+                ? "pending_biometric"
+                : viewedSig
+                  ? "viewed"
+                  : "pending";
+
+        // Documento com vários signatários só está assinado quando o
+        // último assina — por isso o mais recente, não o primeiro.
+        const signedAt = allSigned
+          ? relevant
+              .map((s) => s.signed?.created_at ?? null)
+              .filter((d): d is string => !!d)
+              .sort()
+              .at(-1) ?? null
+          : null;
 
         return {
-          signed: rejected ? false : allSigned,
-          rejected,
+          status,
+          signedAt,
+          viewedAt: viewedSig?.viewed?.created_at ?? null,
+          rejectedAt: rejectedSig?.rejected?.created_at ?? null,
+          rejectedReason: rejectedSig?.rejected?.reason ?? null,
           signingLink: relevant[0]?.link?.short_link ?? null,
         };
       } catch {
