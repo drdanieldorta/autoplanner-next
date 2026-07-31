@@ -5,6 +5,7 @@ import {
   jsonError,
   requireUserWithCompanyOr401,
 } from "@/app/api/_lib/api-helpers";
+import { getDocumentBranding } from "@/lib/branding/document";
 import { feegow, FeegowError } from "@/lib/integrations/feegow";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { generatePdfFromHtml } from "@/lib/integrations/pdf";
@@ -145,9 +146,14 @@ export async function POST(req: Request) {
   const planoFinal = { ...plano, revisao };
 
   // ── PDF ──────────────────────────────────────────────────────────────
+  // Identidade visual da empresa — mesma do contrato, para que os dois
+  // documentos do mesmo envio saiam coerentes. Nunca joga: sem branding
+  // configurado a folha sai neutra.
+  const branding = await getDocumentBranding(auth.user.companyId);
+
   let pdfBuffer: Buffer;
   try {
-    pdfBuffer = await generatePdfFromHtml(renderFolhaExecucao(planoFinal), {
+    pdfBuffer = await generatePdfFromHtml(renderFolhaExecucao(planoFinal, { branding }), {
       displayHeaderFooter: true,
       headerTemplate: "<div></div>",
       footerTemplate: footerTemplateFor(planoFinal),

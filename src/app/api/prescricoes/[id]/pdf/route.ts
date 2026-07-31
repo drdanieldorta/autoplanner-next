@@ -2,6 +2,7 @@ import {
   jsonError,
   requireUserWithCompanyOr401,
 } from "@/app/api/_lib/api-helpers";
+import { getDocumentBranding } from "@/lib/branding/document";
 import { generatePdfFromHtml } from "@/lib/integrations/pdf";
 import {
   footerTemplateFor,
@@ -54,9 +55,11 @@ export async function GET(
     previa = true;
   }
 
+  const branding = await getDocumentBranding(auth.user.companyId);
+
   let pdf: Buffer;
   try {
-    pdf = await generatePdfFromHtml(renderFolhaExecucao(plano, { previa }), {
+    pdf = await generatePdfFromHtml(renderFolhaExecucao(plano, { previa, branding }), {
       displayHeaderFooter: true,
       headerTemplate: "<div></div>",
       footerTemplate: footerTemplateFor(plano),

@@ -1,5 +1,11 @@
 import "server-only";
 
+import {
+  renderBrandingCss,
+  renderBrandingHeader,
+  type DocumentBranding,
+} from "@/lib/branding/document";
+import { resolveDocPalette } from "@/lib/branding/palette";
 import { VIA_CURTA } from "@/lib/prescricao/enums";
 import type { PlanoExecucao } from "@/lib/prescricao/types";
 
@@ -28,11 +34,18 @@ import type { PlanoExecucao } from "@/lib/prescricao/types";
  * CRONOGRAMA DE APLICAÇÕES e o rodapé diz explicitamente o que ele não é.
  */
 
-const css = `
+function buildCss(branding?: DocumentBranding): string {
+  const palette = branding?.palette ?? resolveDocPalette(null, null);
+  const branded = branding?.hasBranding ?? false;
+  // Sem identidade configurada, o documento sai exatamente como saía antes.
+  const secBg = branded ? palette.secondary : "#e5e7eb";
+  const secFg = branded ? palette.onSecondary : "#111";
+  const rule = branded ? palette.primary : "#111";
+  return `
   @page { margin: 0; }
   body { font-family: Arial, sans-serif; font-size: 10.5px; line-height: 1.45; color: #111; padding: 14mm 12mm; }
 
-  .head { border-bottom: 2px solid #111; padding-bottom: 8px; margin-bottom: 12px; }
+  .head { border-bottom: 2px solid ${rule}; padding-bottom: 8px; margin-bottom: 12px; }
   .head .clinica { font-size: 10px; color: #555; text-align: center; margin-bottom: 6px; }
   .head h1 { text-align: center; font-size: 14px; font-weight: bold; letter-spacing: 0.05em; text-transform: uppercase; margin: 0; }
   .head .meta { text-align: center; font-size: 9.5px; color: #666; margin-top: 5px; }
@@ -57,7 +70,7 @@ const css = `
   .bloco .t { font-weight: bold; text-transform: uppercase; font-size: 9px; letter-spacing: 0.06em; margin-bottom: 3px; }
   .bloco .c { white-space: pre-wrap; }
 
-  .sec { background: #e5e7eb; padding: 5px 10px; font-weight: bold; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 8px 0; }
+  .sec { background: ${secBg}; color: ${secFg}; padding: 5px 10px; font-weight: bold; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 8px 0; }
 
   table.grid { width: 100%; border-collapse: collapse; font-size: 10px; }
   table.grid thead { display: table-header-group; }
@@ -83,7 +96,8 @@ const css = `
   .disclaimer { margin-top: 16px; padding-top: 8px; border-top: 1px solid #d1d5db; font-size: 8.5px; color: #555; line-height: 1.45; }
 
   .previa { position: fixed; top: 40%; left: 0; width: 100%; text-align: center; font-size: 54px; font-weight: bold; color: rgba(17,17,17,0.10); transform: rotate(-28deg); letter-spacing: 0.1em; }
-`;
+${renderBrandingCss(branding ?? { companyName: "", logoDataUri: null, palette, hasBranding: false })}`;
+}
 
 /**
  * Conduta assistencial impressa em toda folha.
@@ -188,6 +202,11 @@ function viaHtml(via: string | null, inferida: boolean): string {
 export type RenderExecucaoOptions = {
   /** Marca d'água "PRÉVIA" — usada no preview, nunca no que vai à Feegow. */
   previa?: boolean;
+  /**
+   * Identidade visual da empresa. Ausente ⇒ a folha sai neutra (preto/cinza),
+   * exatamente como saía antes da feature de branding existir.
+   */
+  branding?: DocumentBranding;
 };
 
 export function renderFolhaExecucao(
@@ -293,12 +312,21 @@ export function renderFolhaExecucao(
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
-<head><meta charset="UTF-8"><title>Cronograma de aplicações</title><style>${css}</style></head>
+<head><meta charset="UTF-8"><title>Cronograma de aplicações</title><style>${buildCss(opts.branding)}</style></head>
 <body>
 ${opts.previa ? `<div class="previa">PRÉVIA</div>` : ""}
+${opts.branding ? renderBrandingHeader(opts.branding) : ""}
 
 <div class="head">
-  <div class="clinica">${ou(plano.clinica.nome, "&nbsp;")}${plano.clinica.cnpj ? ` · CNPJ ${escapeHtml(plano.clinica.cnpj)}` : ""}</div>
+  ${
+    // Com cabeçalho de marca, o nome da empresa já aparece acima — repetir
+    // aqui seria ruído. O CNPJ continua, porque é o identificador legal.
+    opts.branding?.hasBranding
+      ? plano.clinica.cnpj
+        ? `<div class="clinica">CNPJ ${escapeHtml(plano.clinica.cnpj)}</div>`
+        : ""
+      : `<div class="clinica">${ou(plano.clinica.nome, "&nbsp;")}${plano.clinica.cnpj ? ` · CNPJ ${escapeHtml(plano.clinica.cnpj)}` : ""}</div>`
+  }
   <h1>Cronograma de aplicações<br/>Folha de execução de enfermagem</h1>
   <div class="meta">
     Protocolo: ${ou(plano.protocolo.nome)} ·

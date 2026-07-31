@@ -4,6 +4,7 @@ import { FileText } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { isVia } from "@/lib/prescricao/enums";
 import { getProtocolById } from "@/lib/services/protocols";
+import { loadProtocolFormData } from "@/lib/services/protocol-form-data";
 import { PageHeader } from "../../../_components/page-header";
 import { ProtocolForm } from "../../_components/protocol-form";
 
@@ -19,7 +20,10 @@ export default async function Page({
   if (!user.companyId) notFound();
 
   const { id } = await params;
-  const protocol = await getProtocolById({ id, companyId: user.companyId });
+  const [protocol, formData] = await Promise.all([
+    getProtocolById({ id, companyId: user.companyId }),
+    loadProtocolFormData(user.companyId),
+  ]);
   if (!protocol) notFound();
 
   return (
@@ -33,6 +37,9 @@ export default async function Page({
       <ProtocolForm
         mode="edit"
         initialId={protocol.id}
+        hasFeegow={formData.hasFeegow}
+        feegowError={formData.feegowError}
+        procedures={formData.procedures}
         // ⚠️ Este map é destrutivo por natureza: `updateProtocol` faz
         // delete-then-insert dos itens, então TODO campo novo de
         // protocol_items precisa ser repassado aqui. Um campo esquecido não
