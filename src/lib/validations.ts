@@ -1,13 +1,23 @@
 import { z } from 'zod';
 
+import { VIAS } from '@/lib/prescricao/enums';
+
 // Protocol validation schemas
+//
+// `via` e `cuidados` são a camada clínica mínima (2026-07-30). Ambos são
+// OPCIONAIS de propósito: todo protocolo já existente tem esses campos
+// nulos, e torná-los obrigatórios quebraria a edição de qualquer protocolo
+// legado — além de bloquear o envio automático do contrato, já que a folha
+// é gerada no mesmo fluxo.
 export const protocolItemSchema = z.object({
   procedure_id: z.string().min(1, 'Selecione um procedimento'),
   procedure_name: z.string().min(1, 'Nome do procedimento é obrigatório'),
   quantity: z.number().int().positive('Quantidade deve ser maior que zero'),
   interval_days: z.number().int().min(0, 'Intervalo não pode ser negativo'),
   value_cents: z.number().int().min(0, 'Valor não pode ser negativo'),
-  discount_percent: z.number().int().min(0).max(100, 'Desconto deve estar entre 0 e 100%')
+  discount_percent: z.number().int().min(0).max(100, 'Desconto deve estar entre 0 e 100%'),
+  via: z.enum(VIAS).nullable().optional(),
+  cuidados: z.string().max(500, 'Máximo de 500 caracteres').nullable().optional(),
 });
 
 export const createProtocolSchema = z.object({
@@ -15,6 +25,8 @@ export const createProtocolSchema = z.object({
     .min(3, 'Nome deve ter pelo menos 3 caracteres')
     .max(120, 'Nome deve ter no máximo 120 caracteres')
     .trim(),
+  cuidados_gerais: z.string().max(2000, 'Máximo de 2000 caracteres').nullable().optional(),
+  sinais_alerta: z.string().max(2000, 'Máximo de 2000 caracteres').nullable().optional(),
   items: z.array(protocolItemSchema)
     .min(1, 'Adicione pelo menos um procedimento')
 });
@@ -73,6 +85,15 @@ export const createOrcamentoSchema = z.object({
   custom_payment_method: z.string().nullable().optional(),
   installments: z.number().int().min(1).max(12).nullable().optional(),
   installment_value_cents: z.number().int().nullable().optional(),
+
+  // Cronograma de aplicações (enfermagem)
+  paciente_alergias: z.string().max(500).nullable().optional(),
+  observacoes: z.string().max(1000).nullable().optional(),
+  prescricao_inicio: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data inválida')
+    .nullable()
+    .optional(),
 }).refine(
   (data) => Boolean(data.payment_method) || Boolean((data.custom_payment_method ?? '').trim()),
   {

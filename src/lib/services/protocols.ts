@@ -9,7 +9,13 @@ type ProtocolItemRow =
 
 export type Protocol = Pick<
   ProtocolRow,
-  "id" | "name" | "created_at" | "updated_at" | "total_value_cents"
+  | "id"
+  | "name"
+  | "created_at"
+  | "updated_at"
+  | "total_value_cents"
+  | "cuidados_gerais"
+  | "sinais_alerta"
 > & {
   itemsCount: number;
 };
@@ -31,7 +37,7 @@ export async function listProtocols(args: {
   let query = supabase
     .from("protocols")
     .select(
-      `id, name, created_at, updated_at, total_value_cents, protocol_items(count)`,
+      `id, name, created_at, updated_at, total_value_cents, cuidados_gerais, sinais_alerta, protocol_items(count)`,
     )
     .eq("company_id", args.companyId);
 
@@ -52,6 +58,8 @@ export async function listProtocols(args: {
       created_at: r.created_at,
       updated_at: r.updated_at,
       total_value_cents: r.total_value_cents ?? 0,
+      cuidados_gerais: r.cuidados_gerais ?? null,
+      sinais_alerta: r.sinais_alerta ?? null,
       itemsCount: r.protocol_items?.[0]?.count ?? 0,
     };
   });
@@ -99,7 +107,14 @@ export async function getProtocolById(args: {
   const supabase = await createClient();
   const protocolResult = await supabase
     .from("protocols")
-    .select("id, name, created_at, updated_at, total_value_cents, company_id")
+    // ⚠️ Lista explícita: qualquer coluna nova PRECISA ser adicionada aqui.
+    // A página de editar remonta o form a partir deste retorno e
+    // `updateProtocol` faz delete-then-insert dos itens — uma coluna
+    // esquecida aqui não fica "sem aparecer", ela é APAGADA no primeiro
+    // salvamento.
+    .select(
+      "id, name, created_at, updated_at, total_value_cents, company_id, cuidados_gerais, sinais_alerta",
+    )
     .eq("id", args.id)
     .eq("company_id", args.companyId)
     .maybeSingle();
@@ -119,6 +134,8 @@ export async function getProtocolById(args: {
     created_at: protocol.created_at,
     updated_at: protocol.updated_at,
     total_value_cents: protocol.total_value_cents ?? 0,
+    cuidados_gerais: protocol.cuidados_gerais ?? null,
+    sinais_alerta: protocol.sinais_alerta ?? null,
     itemsCount: items.length,
     items,
   };

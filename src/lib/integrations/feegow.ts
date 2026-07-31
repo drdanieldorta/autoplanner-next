@@ -346,14 +346,29 @@ export function feegow(token: string) {
 
     /**
      * Anexa um PDF base64 ao prontuário do paciente.
-     * O `base64` deve incluir o prefixo `data:application/pdf;base64,`.
+     * O `base64` deve incluir o prefixo `data:application/pdf;base64,`
+     * (obrigatório aqui — o `laudo_base64` de /medical-reports/create é o
+     * inverso, base64 cru; inconsistência da própria Feegow).
+     *
+     * ⚠️ Diferente dos outros métodos deste cliente, este VALIDA O ENVELOPE.
+     * A convenção da Feegow é `{"success": true, "content": ...}` — ou seja,
+     * `success` é o canal de erro da API, e um HTTP 200 com
+     * `{"success": false}` é uma FALHA. O `fetcher` só lança em `!res.ok`,
+     * então sem esta checagem um upload rejeitado (paciente inexistente,
+     * arquivo grande demais) seria registrado como entregue.
+     *
+     * Isso importa mais aqui do que em qualquer outro ponto: é o que decide
+     * se `prescricao_feegow_em` é gravado, e a enfermagem confia no
+     * prontuário. Não existe endpoint de leitura de anexos para conferir
+     * depois, nem delete para desfazer.
      */
     async uploadBase64ToPatient(args: {
       paciente_id: string;
       base64: string;
       arquivo_descricao: string;
     }): Promise<unknown> {
-      return fetcher("/patient/upload-base64", {
+      const path = "/patient/upload-base64";
+      const raw = await fetcher<unknown>(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -362,6 +377,23 @@ export function feegow(token: string) {
           arquivo_descricao: args.arquivo_descricao,
         }),
       });
+
+      if (raw && typeof raw === "object" && "success" in raw) {
+        const success = (raw as { success?: unknown }).success;
+        // Só `false` explícito é falha. `undefined` passa: este endpoint não
+        // tem exemplo de resposta salvo em nenhum lugar da documentação, e
+        // não queremos rejeitar um envelope legítimo mas não documentado.
+        if (success === false) {
+          throw new FeegowError(
+            200,
+            path,
+            raw,
+            `Feegow recusou o anexo: ${JSON.stringify(raw).slice(0, 400)}`,
+          );
+        }
+      }
+
+      return raw;
     },
   };
 }

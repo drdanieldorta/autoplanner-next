@@ -11,6 +11,8 @@ import {
   Check,
   ChevronsUpDown,
   AlertCircle,
+  Syringe,
+  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -25,6 +27,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Command,
   CommandEmpty,
@@ -44,6 +48,7 @@ import { cn } from "@/lib/utils";
 import { createProtocolSchema } from "@/lib/validations";
 import type { ProtocolProcedureOption } from "@/lib/services/protocol-form-data";
 import { createProtocol, updateProtocol } from "../actions";
+import { ProtocolClinicalFields } from "./protocol-clinical-fields";
 
 type FormValues = z.infer<typeof createProtocolSchema>;
 
@@ -80,6 +85,25 @@ export function ProtocolForm({
   // não travar o cadastro de protocolos por causa de uma indisponibilidade.
   const useFeegowPicker = hasFeegow && procedures.length > 0;
 
+  // Blocos clínicos abertos. Já vêm abertos os itens que têm dado clínico,
+  // para o usuário ver o que existe sem ter que caçar.
+  const [clinicosAbertos, setClinicosAbertos] = useState<Set<number>>(
+    () =>
+      new Set(
+        initialValues.items
+          .map((item, i) => (item.via || item.cuidados ? i : -1))
+          .filter((i) => i >= 0),
+      ),
+  );
+
+  const toggleClinico = (index: number) =>
+    setClinicosAbertos((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+
   const form = useForm<FormValues>({
     resolver: zodResolver(createProtocolSchema),
     defaultValues: initialValues,
@@ -110,6 +134,8 @@ export function ProtocolForm({
       interval_days: 0,
       value_cents: 0,
       discount_percent: 0,
+      via: null,
+      cuidados: "",
     });
     setValueInputs((prev) => [...prev, ""]);
   };
@@ -118,6 +144,16 @@ export function ProtocolForm({
     remove(index);
     setValueInputs((prev) => prev.filter((_, i) => i !== index));
     setOpenPicker(null);
+    // Reindexa os blocos abertos: sem isso, remover um item faria o bloco
+    // clínico de outro abrir sozinho.
+    setClinicosAbertos((prev) => {
+      const next = new Set<number>();
+      for (const i of prev) {
+        if (i < index) next.add(i);
+        else if (i > index) next.add(i - 1);
+      }
+      return next;
+    });
   };
 
   /**
@@ -192,6 +228,38 @@ export function ProtocolForm({
                 {form.formState.errors.name.message}
               </p>
             )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Cuidados de enfermagem</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Opcional. Sai no cabeçalho do cronograma de aplicações entregue à
+            equipe.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <Label htmlFor="cuidados_gerais">Cuidados gerais</Label>
+            <Textarea
+              id="cuidados_gerais"
+              rows={3}
+              placeholder="Ex: verificar acesso venoso antes de iniciar; manter paciente hidratado"
+              {...form.register("cuidados_gerais")}
+            />
+          </div>
+          <div>
+            <Label htmlFor="sinais_alerta">
+              Sinais de alerta — suspender e comunicar
+            </Label>
+            <Textarea
+              id="sinais_alerta"
+              rows={3}
+              placeholder="Ex: dor torácica, dispneia, rash cutâneo, queda de PA"
+              {...form.register("sinais_alerta")}
+            />
           </div>
         </CardContent>
       </Card>
@@ -376,6 +444,32 @@ export function ProtocolForm({
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
+                    <div className="md:col-span-12 flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs text-muted-foreground"
+                        onClick={() => toggleClinico(index)}
+                      >
+                        <Syringe className="h-3.5 w-3.5 mr-1.5" />
+                        Detalhes clínicos
+                        <ChevronDown
+                          className={`h-3.5 w-3.5 ml-1 transition-transform ${
+                            clinicosAbertos.has(index) ? "rotate-180" : ""
+                          }`}
+                        />
+                      </Button>
+                      {items[index]?.via && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          {items[index].via}
+                        </Badge>
+                      )}
+                    </div>
+
+                    {clinicosAbertos.has(index) && (
+                      <ProtocolClinicalFields form={form} index={index} />
+                    )}
                   </div>
                 );
               })}
