@@ -63,7 +63,7 @@ export async function GET(
       displayHeaderFooter: true,
       headerTemplate: "<div></div>",
       footerTemplate: footerTemplateFor(plano),
-      margin: { top: "12mm", right: "0mm", bottom: "14mm", left: "0mm" },
+      margin: { top: "14mm", right: "12mm", bottom: "18mm", left: "12mm" },
     });
   } catch (err) {
     return jsonError(

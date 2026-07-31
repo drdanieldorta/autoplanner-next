@@ -42,8 +42,11 @@ function buildCss(branding?: DocumentBranding): string {
   const secFg = branded ? palette.onSecondary : "#111";
   const rule = branded ? palette.primary : "#111";
   return `
-  @page { margin: 0; }
-  body { font-family: Arial, sans-serif; font-size: 10.5px; line-height: 1.45; color: #111; padding: 14mm 12mm; }
+  /* NAO declarar "@page { margin: 0 }" aqui. Isso anula a caixa de margem que
+     o Puppeteer usa para desenhar o footerTemplate, e o rodape passa a ser
+     impresso POR CIMA do conteudo da pagina. As margens sao definidas em
+     generatePdfFromHtml, e o padding do body fica zerado para nao somar. */
+  body { font-family: Arial, sans-serif; font-size: 10.5px; line-height: 1.45; color: #111; padding: 0; }
 
   .head { border-bottom: 2px solid ${rule}; padding-bottom: 8px; margin-bottom: 12px; }
   .head .clinica { font-size: 10px; color: #555; text-align: center; margin-bottom: 6px; }
@@ -70,7 +73,9 @@ function buildCss(branding?: DocumentBranding): string {
   .bloco .t { font-weight: bold; text-transform: uppercase; font-size: 9px; letter-spacing: 0.06em; margin-bottom: 3px; }
   .bloco .c { white-space: pre-wrap; }
 
-  .sec { background: ${secBg}; color: ${secFg}; padding: 5px 10px; font-weight: bold; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 8px 0; }
+  /* page-break-after: um titulo de secao sozinho no fim da pagina nao
+     significa nada — ele viaja junto com o que titula. */
+  .sec { background: ${secBg}; color: ${secFg}; padding: 5px 10px; font-weight: bold; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; margin: 12px 0 7px 0; page-break-after: avoid; }
 
   table.grid { width: 100%; border-collapse: collapse; font-size: 10px; }
   table.grid thead { display: table-header-group; }
@@ -85,15 +90,20 @@ function buildCss(branding?: DocumentBranding): string {
 
   .blank { border-bottom: 1px solid #9ca3af; display: inline-block; }
 
-  .orient { font-size: 9.5px; margin-top: 6px; }
-  .orient li { margin-bottom: 2.5px; }
+  /* Lista de conduta assistencial: parte-la deixa órfãos soltos no topo da
+     página seguinte, longe do título que dá sentido a eles. */
+  .orient { font-size: 9px; margin: 4px 0 0 0; padding-left: 16px; page-break-inside: avoid;
+            column-count: 2; column-gap: 14px; }
+  .orient li { margin-bottom: 2px; break-inside: avoid; }
+  /* Assinatura e disclaimer viajam juntos e nunca se separam. */
+  .fecho { page-break-inside: avoid; }
 
-  .assin { margin-top: 26px; font-size: 10px; }
-  .assin .line { border-bottom: 1px solid #111; width: 62%; margin: 34px 0 5px 0; }
+  .assin { margin-top: 14px; font-size: 10px; }
+  .assin .line { border-bottom: 1px solid #111; width: 62%; margin: 22px 0 4px 0; }
   .assin .who { font-weight: bold; }
   .assin .meta { font-size: 9px; color: #555; }
 
-  .disclaimer { margin-top: 16px; padding-top: 8px; border-top: 1px solid #d1d5db; font-size: 8.5px; color: #555; line-height: 1.45; }
+  .disclaimer { margin-top: 10px; padding-top: 6px; border-top: 1px solid #d1d5db; font-size: 8px; color: #555; line-height: 1.4; }
 
   .previa { position: fixed; top: 40%; left: 0; width: 100%; text-align: center; font-size: 54px; font-weight: bold; color: rgba(17,17,17,0.10); transform: rotate(-28deg); letter-spacing: 0.1em; }
 ${renderBrandingCss(branding ?? { companyName: "", logoDataUri: null, palette, hasBranding: false })}`;
@@ -378,6 +388,7 @@ ${blocos}
 <div class="sec">Orientações de enfermagem</div>
 <ul class="orient">${orientacoesHtml}</ul>
 
+<div class="fecho">
 <div class="assin">
   <div class="line"></div>
   <div class="who">${ou(plano.profissional.nome)}</div>
@@ -391,6 +402,7 @@ ${blocos}
   Não informa dose, diluição ou velocidade de infusão: conferir a prescrição
   de registro do paciente antes de qualquer preparo ou administração.
   Paciente ${ou(plano.paciente.nome)} · CPF ${cpfMascarado(plano.paciente.cpf)} · Ref. ${ou(plano.proposta_ref)} · rev. ${plano.revisao}
+</div>
 </div>
 
 </body></html>`;
