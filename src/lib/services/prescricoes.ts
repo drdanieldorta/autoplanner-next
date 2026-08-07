@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import { canonicalJson } from "@/lib/prescricao/canonical";
+import { isVia } from "@/lib/prescricao/enums";
 import { projetarPlano, type ItemCru } from "@/lib/prescricao/project";
 import type {
   PlanoExecucao,
@@ -124,7 +125,7 @@ export async function loadPrescricaoFonte(args: {
 
     const itemsResult = await admin
       .from("protocol_items")
-      .select("id, procedure_name, quantity, interval_days, via, cuidados")
+      .select("id, procedure_name, quantity, interval_days, inicio_dias, dose, via, cuidados")
       .eq("protocol_id", protocoloId)
       .order("created_at", { ascending: true });
     for (const raw of (itemsResult.data ?? []) as Array<{
@@ -132,6 +133,8 @@ export async function loadPrescricaoFonte(args: {
       procedure_name: string;
       quantity: number;
       interval_days: number;
+      inicio_dias: number | null;
+      dose: string | null;
       via: string | null;
       cuidados: string | null;
     }>) {
@@ -140,6 +143,8 @@ export async function loadPrescricaoFonte(args: {
         procedure_name: raw.procedure_name,
         quantity: raw.quantity,
         interval_days: raw.interval_days,
+        inicio_dias: raw.inicio_dias ?? 0,
+        dose: raw.dose,
         via: raw.via,
         cuidados: raw.cuidados,
       });
@@ -147,19 +152,26 @@ export async function loadPrescricaoFonte(args: {
   }
 
   // Procedimentos avulsos vivem em JSONB sem id estável — indexamos por
-  // posição. Só entram no cronograma; não têm camada clínica (o form de
-  // orçamento não a expõe).
+  // posição. A camada clínica deles mora no PRÓPRIO objeto, não no delta:
+  // sem linha em `protocol_items`, não existe modelo do qual desviar.
+  // Gravada por `POST /api/propostas` (ProcedimentoAdicionalSchema).
   const adicionais = Array.isArray(proposta.procedimentos_adicionais)
     ? (proposta.procedimentos_adicionais as Array<Record<string, unknown>>)
     : [];
   adicionais.forEach((extra, i) => {
+    const via = extra.via;
     itens.push({
       ref: `extra:${i}`,
       procedure_name: String(extra.procedure_name ?? "Procedimento"),
       quantity: Number(extra.quantity ?? 1),
       interval_days: Number(extra.interval_days ?? 0),
-      via: null,
-      cuidados: null,
+      inicio_dias: Number(extra.inicio_dias ?? 0),
+      dose: typeof extra.dose === "string" ? extra.dose : null,
+      // JSONB não tem CHECK: valida contra o enum em vez de confiar.
+      // `normalizarItem` cairia no heurístico de nome para valor inválido,
+      // o que é o comportamento certo para "via desconhecida".
+      via: isVia(via) ? via : null,
+      cuidados: typeof extra.cuidados === "string" ? extra.cuidados : null,
     });
   });
 

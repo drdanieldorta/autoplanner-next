@@ -175,7 +175,11 @@ export function CronogramaEditor({
       return { ...prev, [ref]: { ...atual, sessoes } };
     });
 
-  const setCampo = (ref: string, campo: "via" | "cuidados", valor: unknown) =>
+  const setCampo = (
+    ref: string,
+    campo: "via" | "dose" | "cuidados",
+    valor: unknown,
+  ) =>
     setAjustes((prev) => ({
       ...prev,
       [ref]: { ...(prev[ref] ?? {}), [campo]: valor },
@@ -324,6 +328,11 @@ export function CronogramaEditor({
                   ) : (
                     <Badge variant="destructive" className="text-[10px]">
                       sem via
+                    </Badge>
+                  )}
+                  {item.dose && (
+                    <Badge variant="outline" className="text-[10px] font-mono">
+                      {item.dose}
                     </Badge>
                   )}
                   {item.ajustado && (
@@ -488,7 +497,18 @@ export function CronogramaEditor({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="md:col-span-9">
+                  <div className="md:col-span-3">
+                    <Label className="text-xs">Dose (só nesta folha)</Label>
+                    <Input
+                      className="h-8 text-xs"
+                      placeholder={item.dose ?? "Do protocolo"}
+                      value={ajustes[item.ref]?.dose ?? ""}
+                      onChange={(e) =>
+                        setCampo(item.ref, "dose", e.target.value)
+                      }
+                    />
+                  </div>
+                  <div className="md:col-span-6">
                     <Label className="text-xs">Cuidados (só nesta folha)</Label>
                     <Input
                       className="h-8 text-xs"

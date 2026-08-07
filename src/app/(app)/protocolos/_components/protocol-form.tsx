@@ -11,8 +11,6 @@ import {
   Check,
   ChevronsUpDown,
   AlertCircle,
-  Syringe,
-  ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -27,7 +25,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Command,
@@ -48,7 +45,11 @@ import { cn } from "@/lib/utils";
 import { createProtocolSchema } from "@/lib/validations";
 import type { ProtocolProcedureOption } from "@/lib/services/protocol-form-data";
 import { createProtocol, updateProtocol } from "../actions";
-import { ProtocolClinicalFields } from "./protocol-clinical-fields";
+import {
+  DocumentosSelector,
+  type ContractOption,
+} from "@/app/(app)/_components/documentos-selector";
+import { ProtocolClinicalGrid } from "./protocol-clinical-fields";
 
 type FormValues = z.infer<typeof createProtocolSchema>;
 
@@ -62,6 +63,8 @@ type Props = {
   procedures: ProtocolProcedureOption[];
   /** Preenchido quando a empresa tem token mas a chamada falhou. */
   feegowError: string | null;
+  /** Modelos de contrato da empresa, para o padrão de documentos do plano. */
+  contracts: ContractOption[];
 };
 
 export function ProtocolForm({
@@ -71,6 +74,7 @@ export function ProtocolForm({
   hasFeegow,
   procedures,
   feegowError,
+  contracts,
 }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -84,25 +88,6 @@ export function ProtocolForm({
   // Se o catálogo veio vazio (API fora do ar), liberamos o modo manual para
   // não travar o cadastro de protocolos por causa de uma indisponibilidade.
   const useFeegowPicker = hasFeegow && procedures.length > 0;
-
-  // Blocos clínicos abertos. Já vêm abertos os itens que têm dado clínico,
-  // para o usuário ver o que existe sem ter que caçar.
-  const [clinicosAbertos, setClinicosAbertos] = useState<Set<number>>(
-    () =>
-      new Set(
-        initialValues.items
-          .map((item, i) => (item.via || item.cuidados ? i : -1))
-          .filter((i) => i >= 0),
-      ),
-  );
-
-  const toggleClinico = (index: number) =>
-    setClinicosAbertos((prev) => {
-      const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
 
   const form = useForm<FormValues>({
     resolver: zodResolver(createProtocolSchema),
@@ -118,6 +103,8 @@ export function ProtocolForm({
   // mas é a forma idiomática de re-renderizar quando items mudam.
   // eslint-disable-next-line react-hooks/incompatible-library
   const items = form.watch("items");
+  const contractIds = form.watch("contract_ids");
+  const incluirTcle = form.watch("incluir_tcle_padrao");
   const totalCents = items.reduce((sum, item) => {
     const subtotal = (item.quantity || 0) * (item.value_cents || 0);
     const discount = subtotal * ((item.discount_percent || 0) / 100);
@@ -135,6 +122,8 @@ export function ProtocolForm({
       value_cents: 0,
       discount_percent: 0,
       via: null,
+      dose: "",
+      inicio_dias: 0,
       cuidados: "",
     });
     setValueInputs((prev) => [...prev, ""]);
@@ -144,16 +133,6 @@ export function ProtocolForm({
     remove(index);
     setValueInputs((prev) => prev.filter((_, i) => i !== index));
     setOpenPicker(null);
-    // Reindexa os blocos abertos: sem isso, remover um item faria o bloco
-    // clínico de outro abrir sozinho.
-    setClinicosAbertos((prev) => {
-      const next = new Set<number>();
-      for (const i of prev) {
-        if (i < index) next.add(i);
-        else if (i > index) next.add(i - 1);
-      }
-      return next;
-    });
   };
 
   /**
@@ -444,32 +423,6 @@ export function ProtocolForm({
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
-                    <div className="md:col-span-12 flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs text-muted-foreground"
-                        onClick={() => toggleClinico(index)}
-                      >
-                        <Syringe className="h-3.5 w-3.5 mr-1.5" />
-                        Detalhes clínicos
-                        <ChevronDown
-                          className={`h-3.5 w-3.5 ml-1 transition-transform ${
-                            clinicosAbertos.has(index) ? "rotate-180" : ""
-                          }`}
-                        />
-                      </Button>
-                      {items[index]?.via && (
-                        <Badge variant="secondary" className="text-[10px]">
-                          {items[index].via}
-                        </Badge>
-                      )}
-                    </div>
-
-                    {clinicosAbertos.has(index) && (
-                      <ProtocolClinicalFields form={form} index={index} />
-                    )}
                   </div>
                 );
               })}
@@ -480,6 +433,43 @@ export function ProtocolForm({
               {form.formState.errors.items.message}
             </p>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Camada clínica</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            O que a enfermagem lê no cronograma de aplicações. Tudo opcional —
+            o que ficar em branco simplesmente não é impresso.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <ProtocolClinicalGrid form={form} itens={items} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Documentos do plano</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            O que o paciente assina ao aceitar este plano. Cada orçamento
+            nasce com esta seleção e pode ajustá-la.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <DocumentosSelector
+            idPrefix="proto"
+            contracts={contracts}
+            selecionados={contractIds}
+            incluirTcle={incluirTcle}
+            onChangeSelecionados={(ids) =>
+              form.setValue("contract_ids", ids, { shouldDirty: true })
+            }
+            onChangeIncluirTcle={(v) =>
+              form.setValue("incluir_tcle_padrao", v, { shouldDirty: true })
+            }
+          />
         </CardContent>
       </Card>
 

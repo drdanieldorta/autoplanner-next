@@ -36,8 +36,20 @@ import {
 } from "@/components/ui/popover";
 import { formatCurrency, parseCurrency } from "@/lib/currency";
 import { formatCurrencyInput, formatCPF, formatPhoneNumber } from "@/lib/masks";
+import type { Via } from "@/lib/prescricao/enums";
+import type { AjusteItem, PrescricaoAjustes } from "@/lib/prescricao/types";
 import { cn } from "@/lib/utils";
 import { createOrcamentoSchema } from "@/lib/validations";
+
+import {
+  ClinicalGrid,
+  type ClinicalPatch,
+  type ClinicalRow,
+} from "../../_components/clinical-grid";
+import {
+  DocumentosSelector,
+  type ContractOption,
+} from "../../_components/documentos-selector";
 
 import type {
   OrcamentoPatientOption,
@@ -48,24 +60,36 @@ import type {
 type FormValues = z.infer<typeof createOrcamentoSchema>;
 
 type ProtocolItem = {
+  /** `protocol_items.id` — é a CHAVE do delta em `prescricao_ajustes`. */
+  id: string;
   procedure_id: string;
   procedure_name: string;
   quantity: number;
   interval_days: number;
   value_cents: number;
   discount_percent: number;
-  /** Camada clínica — alimenta o cronograma da enfermagem. */
-  via?: string | null;
+  /** Camada clínica PROPOSTA pelo protocolo — alimenta o cronograma. */
+  via: Via | null;
+  dose: string | null;
+  inicio_dias: number;
+  cuidados: string | null;
 };
 
-type ProtocolOption = {
+type ProtocolOptionDocs = {
+  /** Documentos que o protocolo propõe, na ordem definida nele. */
+  contractIds: string[];
+  incluirTcle: boolean;
+};
+
+/** Prefixo que separa linha de avulso de linha de protocolo na grade. */
+const EXTRA = "extra#";
+
+type ProtocolOption = ProtocolOptionDocs & {
   id: string;
   name: string;
   total_value_cents: number;
   items: ProtocolItem[];
 };
-
-type ContractOption = { id: string; name: string };
 
 type Props = {
   hasFeegow: boolean;
@@ -90,12 +114,26 @@ export function OrcamentoForm({
   const [isPending, startTransition] = useTransition();
 
   // Itens do protocolo base — derivados do protocolo selecionado (já vêm
-  // inline em `protocols`). Não são editáveis na criação do orçamento.
+  // inline em `protocols`). Comercialmente não são editáveis aqui; a camada
+  // clínica deles é, via delta (abaixo).
   const [protocolItems, setProtocolItems] = useState<ProtocolItem[]>([]);
 
-  // Itens sem via definida: o cronograma deduz pelo nome e marca para
-  // conferência. Não bloqueia nada — só avisa quem está montando.
-  const protocolSemVia = protocolItems.filter((p) => !p.via);
+  // Camada clínica ajustada PARA ESTE PACIENTE. Mesmo formato e mesma chave
+  // (`protocol_items.id`) que `/orcamentos/[id]/cronograma` grava depois — é
+  // deliberadamente o mesmo delta, não um mecanismo paralelo: o protocolo
+  // continua sendo o modelo e nunca é tocado por ajuste de paciente.
+  const [ajustes, setAjustes] = useState<PrescricaoAjustes>({});
+
+  /** Valor efetivo de um item do protocolo: o delta vence, senão o protocolo. */
+  const efetivo = (item: ProtocolItem) => {
+    const aj = ajustes[item.id];
+    return {
+      via: aj?.via ?? item.via,
+      dose: aj?.dose ?? item.dose,
+      cuidados: aj?.cuidados ?? item.cuidados,
+      inicio_dias: aj?.inicio_dias ?? item.inicio_dias,
+    };
+  };
 
   // Estado do "adicionar procedimento extra" antes de fazer append.
   const [extraProcedureId, setExtraProcedureId] = useState("");
@@ -131,7 +169,10 @@ export function OrcamentoForm({
       protocol_id: null,
       protocol_name: null,
       additional_procedures: [],
-      contract_id: null,
+      // Nada pré-marcado: selecionar documento é ato explícito. Escolher um
+      // protocolo traz a seleção dele.
+      contract_ids: [],
+      incluir_tcle_padrao: false,
       discount_percent: 0,
       payment_method: null,
       custom_payment_method: "",
@@ -159,6 +200,9 @@ export function OrcamentoForm({
   const paymentMethod = form.watch("payment_method");
   const customPaymentMethod = form.watch("custom_payment_method");
   const installments = form.watch("installments") ?? 1;
+  const prescricaoInicio = form.watch("prescricao_inicio");
+  const contractIds = form.watch("contract_ids");
+  const incluirTcle = form.watch("incluir_tcle_padrao");
 
   const selectedPatient = useMemo(
     () => patients.find((p) => p.id === patientId),
@@ -235,10 +279,16 @@ export function OrcamentoForm({
   };
 
   const onSelectProtocol = (id: string) => {
+    // Trocar de protocolo invalida o delta inteiro: as chaves são ids de
+    // `protocol_items` do protocolo ANTERIOR, e mantê-las produziria ajustes
+    // órfãos — invisíveis na tela, visíveis só como aviso na folha.
+    setAjustes({});
     if (id === "none") {
       form.setValue("protocol_id", null);
       form.setValue("protocol_name", null);
       setProtocolItems([]);
+      form.setValue("contract_ids", []);
+      form.setValue("incluir_tcle_padrao", false);
       return;
     }
     const protocol = protocols.find((p) => p.id === id);
@@ -246,7 +296,111 @@ export function OrcamentoForm({
     form.setValue("protocol_id", id);
     form.setValue("protocol_name", protocol.name);
     setProtocolItems(protocol.items);
+    // Protocolo propõe, orçamento dispõe: a seleção dele entra marcada e
+    // segue editável abaixo.
+    form.setValue("contract_ids", protocol.contractIds);
+    form.setValue("incluir_tcle_padrao", protocol.incluirTcle);
   };
+
+  /**
+   * Aplica um patch da grade clínica.
+   *
+   * Item de protocolo → grava no delta. Avulso → grava no próprio item, que
+   * viaja em `procedimentos_adicionais`: sem linha em `protocol_items`, ele
+   * não tem modelo do qual desviar.
+   */
+  const onPatchClinico = (chave: string, patch: ClinicalPatch) => {
+    if (chave.startsWith(EXTRA)) {
+      const index = Number(chave.slice(EXTRA.length));
+      for (const [campo, valor] of Object.entries(patch)) {
+        form.setValue(
+          `additional_procedures.${index}.${campo as keyof ClinicalPatch}`,
+          valor as never,
+          { shouldDirty: true },
+        );
+      }
+      return;
+    }
+
+    const item = protocolItems.find((p) => p.id === chave);
+    if (!item) return;
+
+    setAjustes((prev) => {
+      const atual: AjusteItem = { ...(prev[chave] ?? {}) };
+
+      // Campo vazio significa "sem override" — e não "vazio neste paciente".
+      // É o que `projetarPlano` já faz (`doseAjustada || fonte.dose`): apagar
+      // o texto devolve o valor do protocolo, não deixa o campo em branco.
+      // Nada de `.trim()` no que é gravado, senão não dá para digitar espaço.
+      if ("via" in patch) {
+        if (patch.via) atual.via = patch.via;
+        else delete atual.via;
+      }
+      if ("dose" in patch) {
+        if ((patch.dose ?? "").trim()) atual.dose = patch.dose;
+        else delete atual.dose;
+      }
+      if ("cuidados" in patch) {
+        if ((patch.cuidados ?? "").trim()) atual.cuidados = patch.cuidados;
+        else delete atual.cuidados;
+      }
+      if ("inicio_dias" in patch) atual.inicio_dias = patch.inicio_dias ?? 0;
+
+      // Poda: valor igual ao do protocolo não é ajuste. Sem isso o selo
+      // "ajustado" gruda na linha depois de um ida-e-volta e deixa de
+      // significar alguma coisa.
+      if ((atual.via ?? null) === item.via) delete atual.via;
+      if ((atual.dose ?? "").trim() === (item.dose ?? "").trim())
+        delete atual.dose;
+      if ((atual.cuidados ?? "").trim() === (item.cuidados ?? "").trim())
+        delete atual.cuidados;
+      if (atual.inicio_dias === item.inicio_dias) delete atual.inicio_dias;
+
+      const next = { ...prev };
+      if (Object.keys(atual).length === 0) delete next[chave];
+      else next[chave] = atual;
+      return next;
+    });
+  };
+
+  const onResetarClinico = (chave: string) =>
+    setAjustes((prev) => {
+      const next = { ...prev };
+      delete next[chave];
+      return next;
+    });
+
+  // Protocolo e avulsos na MESMA grade: para a enfermagem eles são a mesma
+  // coisa, e separá-los aqui esconderia metade do plano.
+  const linhasClinicas: ClinicalRow[] = [
+    ...protocolItems.map((item) => {
+      const e = efetivo(item);
+      return {
+        chave: item.id,
+        nome: item.procedure_name,
+        via: e.via,
+        dose: e.dose,
+        inicio_dias: e.inicio_dias,
+        cuidados: e.cuidados,
+        etiqueta: "Protocolo",
+        ajustado: Boolean(ajustes[item.id]),
+      };
+    }),
+    ...additionalProcedures.map((extra, index) => ({
+      chave: `${EXTRA}${index}`,
+      nome: extra?.procedure_name ?? "",
+      via: (extra?.via as Via | null) ?? null,
+      dose: extra?.dose ?? null,
+      inicio_dias: extra?.inicio_dias ?? 0,
+      cuidados: extra?.cuidados ?? null,
+      etiqueta: "Extra",
+    })),
+  ];
+
+  // Conta sobre o valor EFETIVO, não sobre o do protocolo: definir a via aqui
+  // tem que apagar o aviso. (Antes esta contagem lia um campo que nunca era
+  // carregado, então acusava todo item de todo protocolo.)
+  const semVia = linhasClinicas.filter((l) => !l.via).length;
 
   const onAddExtraProcedure = () => {
     if (hasFeegow) {
@@ -267,6 +421,11 @@ export function OrcamentoForm({
         interval_days: extraInterval,
         value_cents: valueCents,
         discount_percent: 0,
+        // Camada clínica em branco — preenchida na grade abaixo, opcional.
+        via: null,
+        dose: null,
+        inicio_dias: 0,
+        cuidados: null,
       });
       setExtraProcedureId("");
     } else {
@@ -287,6 +446,10 @@ export function OrcamentoForm({
         interval_days: extraInterval,
         value_cents: valueCents,
         discount_percent: 0,
+        via: null,
+        dose: null,
+        inicio_dias: 0,
+        cuidados: null,
       });
       setExtraProcedureName("");
     }
@@ -309,8 +472,27 @@ export function OrcamentoForm({
       return;
     }
 
+    // Salvar sem documento é legítimo (rascunho); ENVIAR não é. Barrar aqui
+    // evita criar o orçamento e só então descobrir, no encadeamento do
+    // envio, que não havia o que assinar — hoje não há tela para corrigir a
+    // seleção depois que o orçamento existe.
+    if (
+      submitAction === "save_and_send" &&
+      values.contract_ids.length === 0 &&
+      !values.incluir_tcle_padrao
+    ) {
+      toast.error(
+        "Selecione ao menos um documento para o paciente assinar, ou marque o contrato padrão do sistema.",
+      );
+      return;
+    }
+
     // Combina procedimentos do protocolo com os extras antes de enviar.
     // O endpoint exige procedimentos.length >= 1.
+    //
+    // Só os 6 campos comerciais: esta lista alimenta a proposta da Feegow,
+    // que não tem onde guardar via, dose ou cuidados. A camada clínica vai
+    // separada — no delta (protocolo) e dentro dos avulsos.
     const allProcedures = [
       ...protocolItems.map((p) => ({
         procedure_id: p.procedure_id,
@@ -348,7 +530,8 @@ export function OrcamentoForm({
       profissional_sys_user: values.professional_sys_user || undefined,
       protocolo_id: values.protocol_id || null,
       protocolo_nome: values.protocol_name || null,
-      contract_id: values.contract_id || null,
+      contract_ids: values.contract_ids,
+      incluir_tcle_padrao: values.incluir_tcle_padrao,
       procedimentos: allProcedures,
       procedimentos_adicionais: values.additional_procedures,
       valor_total_cents: totalCents,
@@ -365,6 +548,7 @@ export function OrcamentoForm({
       paciente_alergias: values.paciente_alergias?.trim() || null,
       observacoes: values.observacoes?.trim() || null,
       prescricao_inicio: values.prescricao_inicio || null,
+      prescricao_ajustes: ajustes,
     };
 
     const shouldSendContract = submitAction === "save_and_send";
@@ -837,31 +1021,28 @@ export function OrcamentoForm({
             )}
           </div>
 
-          {/* Modelo de contrato */}
+          {/* Documentos que o paciente assina */}
           <div className="pt-4 border-t">
             <Label className="text-sm font-medium text-muted-foreground">
-              Modelo de contrato
+              Documentos para assinatura
             </Label>
-            <Select
-              value={form.watch("contract_id") ?? "default"}
-              onValueChange={(value) =>
-                form.setValue("contract_id", value === "default" ? null : value)
+            <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+              {protocolId
+                ? "Veio do protocolo selecionado. Ajustar aqui não altera o protocolo."
+                : "Escolha o que este paciente vai assinar."}
+            </p>
+            <DocumentosSelector
+              idPrefix="orc"
+              contracts={contracts}
+              selecionados={contractIds}
+              incluirTcle={incluirTcle}
+              onChangeSelecionados={(ids) =>
+                form.setValue("contract_ids", ids, { shouldDirty: true })
               }
-            >
-              <SelectTrigger className="mt-1">
-                <SelectValue placeholder="Contrato padrão do sistema" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="default">
-                  Contrato padrão do sistema
-                </SelectItem>
-                {contracts.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onChangeIncluirTcle={(v) =>
+                form.setValue("incluir_tcle_padrao", v, { shouldDirty: true })
+              }
+            />
           </div>
 
           {/* Adicionar procedimento extra */}
@@ -1135,20 +1316,48 @@ export function OrcamentoForm({
           </div>
 
           <div>
-            <Label htmlFor="observacoes">Observações para a enfermagem</Label>
+            <Label htmlFor="observacoes">
+              Observações gerais para a enfermagem
+            </Label>
             <Textarea
               id="observacoes"
               rows={2}
               placeholder="Ex: acesso periférico difícil; paciente ansioso"
               {...form.register("observacoes")}
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              Valem para a folha inteira. Observação de um procedimento
+              específico vai na linha dele, abaixo.
+            </p>
           </div>
 
-          {protocolSemVia.length > 0 && (
+          <div className="border-t pt-4 space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold">
+                Camada clínica deste paciente
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Vem preenchida do protocolo e pode ser ajustada aqui — o
+                protocolo não é alterado. Tudo opcional; o que ficar em branco
+                não é impresso.
+              </p>
+            </div>
+
+            <ClinicalGrid
+              itens={linhasClinicas}
+              inicio={prescricaoInicio}
+              onChange={onPatchClinico}
+              onResetar={onResetarClinico}
+            />
+          </div>
+
+          {semVia > 0 && (
             <p className="text-xs text-muted-foreground border-l-2 border-muted-foreground/40 pl-2">
-              {protocolSemVia.length} item(ns) do protocolo sem via de
-              administração definida. A folha deduz pelo nome e marca para
-              conferência — defina a via em Protocolos para eliminar o aviso.
+              {semVia === 1
+                ? "1 procedimento sem via de administração definida."
+                : `${semVia} procedimentos sem via de administração definida.`}{" "}
+              A folha deduz pelo nome e marca para conferência — defina a via
+              acima para eliminar o aviso.
             </p>
           )}
         </Card>

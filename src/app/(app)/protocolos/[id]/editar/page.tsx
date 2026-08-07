@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import { isVia } from "@/lib/prescricao/enums";
 import { getProtocolById } from "@/lib/services/protocols";
 import { loadProtocolFormData } from "@/lib/services/protocol-form-data";
+import { listContracts } from "@/lib/services/contratos";
 import { PageHeader } from "../../../_components/page-header";
 import { ProtocolForm } from "../../_components/protocol-form";
 
@@ -20,11 +21,13 @@ export default async function Page({
   if (!user.companyId) notFound();
 
   const { id } = await params;
-  const [protocol, formData] = await Promise.all([
+  const [protocol, formData, contractsRaw] = await Promise.all([
     getProtocolById({ id, companyId: user.companyId }),
     loadProtocolFormData(user.companyId),
+    listContracts({ companyId: user.companyId }),
   ]);
   if (!protocol) notFound();
+  const contracts = contractsRaw.map((c) => ({ id: c.id, name: c.name }));
 
   return (
     <div className="space-y-4 md:space-y-6 p-4 md:p-6 max-w-5xl">
@@ -40,6 +43,7 @@ export default async function Page({
         hasFeegow={formData.hasFeegow}
         feegowError={formData.feegowError}
         procedures={formData.procedures}
+        contracts={contracts}
         // ⚠️ Este map é destrutivo por natureza: `updateProtocol` faz
         // delete-then-insert dos itens, então TODO campo novo de
         // protocol_items precisa ser repassado aqui. Um campo esquecido não
@@ -49,6 +53,8 @@ export default async function Page({
           name: protocol.name,
           cuidados_gerais: protocol.cuidados_gerais ?? "",
           sinais_alerta: protocol.sinais_alerta ?? "",
+          contract_ids: protocol.contractIds,
+          incluir_tcle_padrao: protocol.incluir_tcle_padrao,
           items: protocol.items.map((item) => ({
             procedure_id: item.procedure_id,
             procedure_name: item.procedure_name,
@@ -61,6 +67,8 @@ export default async function Page({
             // união vira null e o form pede para escolher, em vez de vazar
             // string arbitrária para dentro do schema.
             via: isVia(item.via) ? item.via : null,
+            dose: item.dose ?? "",
+            inicio_dias: item.inicio_dias ?? 0,
             cuidados: item.cuidados ?? "",
           })),
         }}

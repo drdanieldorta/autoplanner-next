@@ -17,6 +17,7 @@ import {
 import { PageHeader } from "../../_components/page-header";
 import { DeleteButton } from "../../_components/delete-button";
 import { StatusSelector } from "../_components/status-selector";
+import { listPropostaContracts } from "@/lib/services/contratos";
 import { ContractActions } from "../_components/contract-actions";
 import { PrescricaoActions } from "../_components/prescricao-actions";
 import { deleteOrcamentoFromForm } from "../actions";
@@ -59,6 +60,12 @@ export default async function OrcamentoPage({
 
   const proposta = await getPropostaById({ id, companyId: user.companyId });
   if (!proposta) notFound();
+
+  // Documentos deste envio, na ordem em que entram no PDF. O TCLE padrão
+  // não é linha em `contracts` — vem do booleano e fecha a lista.
+  const documentos = await listPropostaContracts({ propostaId: proposta.id });
+  const totalDocumentos =
+    documentos.length + (proposta.incluir_tcle_padrao ? 1 : 0);
 
   // RLS de `api_credentials` bloqueia company_user, então isto pode voltar
   // null mesmo com a empresa tendo Feegow configurada. Nesse caso assumimos
@@ -246,7 +253,40 @@ export default async function OrcamentoPage({
             )}
 
             <div className="pt-3 border-t">
-              <p className="text-sm text-muted-foreground mb-2">Contrato</p>
+              <p className="text-sm text-muted-foreground mb-2">
+                {totalDocumentos === 1
+                  ? "Documento para assinatura"
+                  : "Documentos para assinatura"}
+              </p>
+              {totalDocumentos === 0 ? (
+                <p className="text-sm text-destructive mb-2">
+                  Nenhum documento selecionado — o envio vai falhar.
+                </p>
+              ) : (
+                <ol className="text-sm space-y-1 mb-3">
+                  {documentos.map((doc, i) => (
+                    <li key={doc.id} className="flex gap-2">
+                      <span className="text-muted-foreground font-mono text-xs pt-0.5">
+                        {i + 1}
+                      </span>
+                      <span>{doc.name}</span>
+                    </li>
+                  ))}
+                  {proposta.incluir_tcle_padrao && (
+                    <li className="flex gap-2">
+                      <span className="text-muted-foreground font-mono text-xs pt-0.5">
+                        {documentos.length + 1}
+                      </span>
+                      <span>Contrato padrão do sistema</span>
+                    </li>
+                  )}
+                </ol>
+              )}
+              {totalDocumentos > 1 && (
+                <p className="text-xs text-muted-foreground mb-2">
+                  Um PDF só, com uma assinatura e um anexo no prontuário.
+                </p>
+              )}
               <ContractActions
                 propostaId={proposta.id}
                 documentId={proposta.document_id ?? null}

@@ -181,7 +181,57 @@ npm install --legacy-peer-deps
   - [~] Webhook outbound — **decisão 2026-05-02: descartado.** Sistema é tudo interno por ora. Removidos `lib/integrations/webhook-outbound.ts`, `/api/cron/webhook-dlq`, `vercel.json` e os 2 `dispatchWebhook` calls em `POST /api/propostas` e callback Authentique. Tabelas `webhook_endpoints` + `webhook_dlq` permanecem no Supabase (sem uso). Re-implementar é trivial — git log tem o histórico se a decisão mudar.
   - [x] Permissões finas em `user_tool_permissions` — `lib/services/user-tools.ts` (listToolsForUser + getFuncionarioToolPermissions). Endpoint `GET /api/funcionarios/[id]/permissions` para lazy-load no dialog. Server Action `setFuncionarioToolPermissions` (delete-then-insert idempotente). Botão `<PermissoesDialog>` na listagem de funcionários (admins recebem botão disabled — acesso implícito). `/minhas-ferramentas` saiu do `<ComingSoon>`: Server Component que para admin lista todas as `company_tools.enabled`, para não-admin filtra por `user_tool_permissions`. Mapa nome→rota replica heurístico do Vite legacy. 33 rotas no build, lint clean.
 - [x] **Fase 5.1: Cronograma de aplicações (enfermagem)** — camada clínica mínima no protocolo (`protocols.cuidados_gerais/sinais_alerta`, `protocol_items.via/cuidados`) + `lib/prescricao/*` (módulos neutros: `projetarPlano` pura, `canonicalJson` para idempotência) + renderizador code-driven `templates/default-execucao.ts` + `POST /api/prescricoes/gerar` e `GET /api/prescricoes/[id]/pdf`. Anexa ao prontuário Feegow via `/patient/upload-base64`, encadeado automaticamente após o envio do contrato. 35 rotas no build. Ver "Cronograma de aplicações" abaixo.
+- [x] **Fase 5.2: Camada clínica na criação do orçamento** — a grade clínica (via, dose, começa em, observações) passou a existir também em `/orcamentos/novo`, gravando no MESMO delta `prescricao_ajustes` que o editor de cronograma já usava, e nos avulsos gravando dentro de `procedimentos_adicionais`. `<ClinicalGrid>` + `<DuracaoInput>` compartilhados com o form de protocolo. Corrigidos 3 defeitos verificados: o `map` em `orcamentos/novo/page.tsx` descartava `id`/`via`/`dose`/`inicio_dias`/`cuidados`; `AjusteItemSchema` não aceitava `dose` (tornando dose por paciente inalcançável, e — com `salvarAjustes` fazendo replace — apagável); e a contagem "sem via" era falso positivo estrutural, acusando todo item de todo protocolo.
+- [x] **Fase 5.3: Vários documentos por plano, numa assinatura só** — `protocol_contracts` + `proposta_contracts` (join com `ordem`) e `incluir_tcle_padrao` em ambos. `buildContractHtml` virou `buildContractsHtml`, refatorada em fragmento + shell. `<DocumentosSelector>` compartilhado por protocolo e orçamento. Ver "Documentos do plano" abaixo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
+
+## Documentos do plano (contrato + termos)
+
+Um plano manda **vários documentos** — contrato de prestação, TCLE, termo de imagem —
+e o paciente **assina uma vez**.
+
+**A restrição que define o desenho:** `createDocument` da Authentique recebe
+`$file: Upload!` — **singular**, um arquivo por documento
+([authentique.ts](src/lib/integrations/authentique.ts)). Uma assinatura para vários
+papéis só existe concatenando os papéis num PDF. Isso é sorte, não limitação: tudo
+abaixo do PDF segue **1:1 e intocado** — `propostas.document_id`, o webhook que
+resolve a proposta por `document_id`, o acervo em `contracts/archive.ts` e o anexo
+único no prontuário Feegow.
+
+**Seleção:** o protocolo define o padrão (`protocol_contracts` + `protocols.incluir_tcle_padrao`),
+o orçamento copia e ajusta (`proposta_contracts` + `propostas.incluir_tcle_padrao`).
+Mesmo padrão mental da folha de enfermagem: protocolo propõe, orçamento dispõe.
+`ordem` na tabela de junção é a sequência das páginas.
+
+**O TCLE padrão não é linha em `contracts`** — é código (`renderDefaultSystemContract`).
+Por isso é booleano, não id, e entra **sempre por último**. Não é mais pré-marcado:
+selecionar documento virou ato explícito.
+
+**`propostas.contract_id` é LEGADO.** A migration fez o backfill dela para
+`proposta_contracts` e — a linha que mais importava — marcou `incluir_tcle_padrao`
+nas 189 propostas sem `contract_id`, porque ali "sem contrato" *significava* "manda o
+TCLE". Sem essa linha, todo orçamento antigo ficaria sem documento nenhum. A coluna
+segue na tabela com `COMMENT`; não é mais lida. Não derrubar em produção.
+
+**Montagem — fragmento + shell** ([build-html.ts](src/lib/contracts/build-html.ts)):
+cada documento produz só o corpo, e um `montarShell` junta tudo num `<html>` com
+`.doc + .doc { page-break-before: always }`. Três coisas não podem ser quebradas:
+
+- **O CSS do TCLE é ESCOPADO** (`buildDefaultContractCss(".doc-tcle")`). O contrato do
+  usuário é HTML arbitrário e divide a folha de estilo: um `<table class="proc">` ou
+  uma `.header-wrap` no texto dele herdaria o estilo do template se as regras fossem
+  globais. Verificado renderizando um contrato com classes deliberadamente colidentes.
+- **NÃO resetar a margem do `body`.** São os 8px default do navegador, que sempre
+  valeram — zerá-los desloca ~2mm todo contrato já emitido. O padding de página vive
+  no wrapper de cada documento (`.doc-custom` 20mm, `.doc-tcle` 20mm 15mm), que é
+  exatamente o que estava no `body` antes.
+- **Guarda de pacote vazio:** zero modelos + TCLE desmarcado ⇒ 422 com mensagem clara,
+  nunca um PDF em branco para o paciente assinar. Consequência direta de o TCLE ter
+  deixado de ser pré-marcado. O formulário também barra antes de criar o orçamento —
+  não existe tela para corrigir a seleção depois.
+
+Regressão verificada empiricamente: pacote de UM documento sai **pixel a pixel
+idêntico** ao de antes do refactor (6 páginas rasterizadas, PNGs iguais byte a byte).
 
 ## Cronograma de aplicações (folha de enfermagem)
 
@@ -207,11 +257,38 @@ o único que fala com a Feegow.
 separado de `prescricao_hash`. Gerar e editar não incrementam nada.
 
 **Ajustes por paciente** vivem em `propostas.prescricao_ajustes` como delta
-esparso: `{"<item_ref>": {via, cuidados, sessoes: {"<n>": offset_dias}}}`. A
-chave da sessão é o índice ORIGINAL (estável), enquanto o número impresso é a
+esparso: `{"<item_ref>": {via, dose, cuidados, inicio_dias, sessoes: {"<n>": offset_dias}}}`.
+A chave da sessão é o índice ORIGINAL (estável), enquanto o número impresso é a
 posição cronológica após o remanejo — se a chave mudasse ao reordenar, editar
 duas vezes perderia o primeiro ajuste. A cascata ("empurrar as seguintes") é
 resolvida na UI e gravada como offsets explícitos, para o delta ser auditável.
+
+`inicio_dias` no delta desloca o ITEM inteiro; `sessoes` continua sendo
+remanejamento pontual e vence por sessão. Não gravar deslocamento de item como
+N offsets de sessão: as N apareceriam marcadas como ajustadas e o selo
+"ajustada" deixaria de significar "esta data foi mexida".
+
+**`AjusteItem` tem DOIS escritores** (2026-08-07): o formulário de criação do
+orçamento e o editor de cronograma. `salvarAjustes` faz **replace**, não merge
+— então um campo aceito só por um dos dois é apagado em silêncio pelo outro.
+Foi exatamente o que houve com `dose`, que existia no tipo e na projeção mas
+nunca no schema de escrita. Por isso o schema Zod é **um só**
+(`prescricaoAjustesSchema` em `lib/validations.ts`), importado pelos dois, e a
+limpeza do delta também (`limparAjustes` em `lib/prescricao/ajustes.ts`).
+⚠️ Em `limparAjustes`, `inicio_dias: 0` é **significativo** (num item que o
+protocolo manda começar em D+14, zero quer dizer "neste paciente começa na 1ª
+sessão"); só via/dose/cuidados vazios são descartados.
+
+**Camada clínica do avulso.** Procedimento extra não tem linha em
+`protocol_items`, logo não tem modelo do qual desviar: a camada clínica dele
+mora DENTRO de `propostas.procedimentos_adicionais` (JSONB), não no delta.
+Tem sua própria lista de lugares a tocar, paralela à dos "CINCO lugares":
+1. `orcamentoProcedureSchema` (`lib/validations.ts`)
+2. os dois `append(...)` em `orcamento-form.tsx`
+3. `ProcedimentoAdicionalSchema` em `api/propostas/route.ts` — **não**
+   `ProcedimentoSchema`, que alimenta a proposta da Feegow e não tem esses campos
+4. `loadPrescricaoFonte` (`lib/services/prescricoes.ts`) — o JSONB não tem
+   CHECK, então `via` é validada contra o enum na leitura
 
 **Regras que não podem ser quebradas:**
 - **A folha não carrega dinheiro.** Nenhum `formatBRL`, nenhuma forma de pagamento — ela
@@ -226,10 +303,38 @@ resolvida na UI e gravada como offsets explícitos, para o delta ser auditável.
   contrato". A folha degrada — imprime "— CONFERIR" — em vez de falhar.
 - **Falha da folha nunca derruba o contrato** — `toast.warning`, nunca rollback.
 
-**Ao adicionar coluna em `protocol_items`, ela precisa entrar em QUATRO lugares** ou é
-apagada silenciosamente no primeiro save (delete-then-insert):
-`protocolItemSchema` → `getProtocolById` (select explícito) → `protocolos/[id]/editar`
-(initialValues) → o `map` de items em `updateProtocol`.
+**Ao adicionar coluna em `protocol_items`, ela precisa entrar em CINCO lugares** ou é
+apagada silenciosamente no primeiro save (delete-then-insert), ou simplesmente nunca
+chega na folha:
+1. `protocolItemSchema` (`lib/validations.ts`)
+2. `protocolos/[id]/editar` — `initialValues` (map destrutivo)
+3. os `map` de items em `createProtocol` **e** `updateProtocol`
+4. `getProtocolById` — `protocol_items` usa `.select("*")`, então passa sozinho; o select
+   explícito ali é o de `protocols`
+5. **`lib/services/prescricoes.ts`** — este select de `protocol_items` É explícito, e é o
+   que alimenta a folha. Coluna esquecida aqui salva no banco e some do documento.
+
+**Dose (2026-08-07).** É opcional e o documento reage a ela: sem nenhum item com dose, a
+folha sai byte a byte idêntica à de antes da feature — inclusive o rodapé afirmando que
+"não informa dose" e a orientação sem menção a dose. Com dose, a coluna DOSE aparece e as
+duas frases trocam. Diluente e velocidade seguem fora de escopo nos dois casos. Se dose
+virar rotina, revisitar a assinatura do prescritor (hoje ele é referência, não signatário).
+
+**Onde a camada clínica é definida (2026-08-07).** Dois pontos, um armazenamento:
+o **protocolo** define o modelo (`protocol_items.*`), e o **orçamento** define o
+desvio deste paciente (delta / JSONB do avulso). A grade é a mesma nas duas telas
+(`app/(app)/_components/clinical-grid.tsx`, componente controlado sem
+acoplamento a RHF) para que ensinem a mesma coisa. "Começa em" usa
+`<DuracaoInput>`: o usuário digita em dias/semanas/meses, **grava sempre em
+dias**, e a tela mostra a resolução ("2 meses · 60 dias · 09/10/2026") porque
+mês vale 30 dias fixos num modelo de offset — aceitar "2 meses" e agendar 60
+dias em silêncio seria armadilha. O hint usa `addDiasISO` de `project.ts`, a
+MESMA aritmética da agenda impressa; não criar uma paralela.
+
+**`inicio_dias`** é offset a partir do D0, não data — o protocolo é modelo reutilizável.
+O offset padrão de uma sessão é `inicio_dias + idx * interval_days`. Ajustes por paciente
+(`prescricao_ajustes.sessoes`) guardam offsets ABSOLUTOS, então mudar `inicio_dias` num
+protocolo não move sessões já remanejadas em folhas existentes.
 
 **Feegow:** não existe escrita estruturada de prescrição. `/medical-record/*` é todo
 GET-only e `/medical-reports/create` exige `agendamento_id`. O único caminho é anexar PDF

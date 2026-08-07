@@ -17,8 +17,24 @@ export const protocolItemSchema = z.object({
   value_cents: z.number().int().min(0, 'Valor não pode ser negativo'),
   discount_percent: z.number().int().min(0).max(100, 'Desconto deve estar entre 0 e 100%'),
   via: z.enum(VIAS).nullable().optional(),
+  dose: z.string().max(120, 'Máximo de 120 caracteres').nullable().optional(),
+  inicio_dias: z.number().int().min(0, 'Início não pode ser negativo').max(3650).optional(),
   cuidados: z.string().max(500, 'Máximo de 500 caracteres').nullable().optional(),
 });
+
+// Documentos que o paciente assina. Vão todos num PDF só, porque o
+// `createDocument` da Authentique recebe `$file: Upload!` — singular.
+//
+// O TCLE padrão é booleano e não id: ele não é linha em `contracts`, é
+// código (`renderDefaultSystemContract`).
+//
+// Nenhum dos dois é obrigatório aqui. Um plano sem documento é erro de
+// ENVIO, checado em `buildContractsHtml` — bloquear no schema impediria
+// salvar um protocolo pela metade, que é um uso legítimo.
+export const documentosPlanoSchema = {
+  contract_ids: z.array(z.string().uuid()).default([]),
+  incluir_tcle_padrao: z.boolean().default(false),
+};
 
 export const createProtocolSchema = z.object({
   name: z.string()
@@ -28,7 +44,8 @@ export const createProtocolSchema = z.object({
   cuidados_gerais: z.string().max(2000, 'Máximo de 2000 caracteres').nullable().optional(),
   sinais_alerta: z.string().max(2000, 'Máximo de 2000 caracteres').nullable().optional(),
   items: z.array(protocolItemSchema)
-    .min(1, 'Adicione pelo menos um procedimento')
+    .min(1, 'Adicione pelo menos um procedimento'),
+  ...documentosPlanoSchema,
 });
 
 export const updateProtocolSchema = createProtocolSchema.extend({
@@ -41,6 +58,10 @@ export const updateProtocolSchema = createProtocolSchema.extend({
 // cliente para feedback imediato. Os campos de paciente/profissional são
 // preenchidos automaticamente pela seleção (modo automático) ou
 // digitados (modo manual).
+// Procedimento avulso. Diferente do item de protocolo, ele NÃO tem modelo
+// para desviar — não existe linha em `protocol_items` correspondente — então
+// a camada clínica dele é dado próprio e viaja dentro do JSONB
+// `propostas.procedimentos_adicionais`, não no delta `prescricao_ajustes`.
 export const orcamentoProcedureSchema = z.object({
   procedure_id: z.string().min(1),
   procedure_name: z.string().min(1, 'Informe o nome do procedimento'),
@@ -48,7 +69,33 @@ export const orcamentoProcedureSchema = z.object({
   interval_days: z.number().int().min(0).default(0),
   value_cents: z.number().int().min(1, 'Informe o valor do procedimento'),
   discount_percent: z.number().int().min(0).max(100).default(0),
+  via: z.enum(VIAS).nullable().optional(),
+  dose: z.string().max(120, 'Máximo de 120 caracteres').nullable().optional(),
+  inicio_dias: z.number().int().min(0).max(3650).optional(),
+  cuidados: z.string().max(500, 'Máximo de 500 caracteres').nullable().optional(),
 });
+
+/**
+ * Ajuste clínico de UM item, em `propostas.prescricao_ajustes`.
+ *
+ * Fica aqui, e não junto de cada tela, porque tem DOIS escritores — a
+ * criação do orçamento e o editor de cronograma — e `salvarAjustes` faz
+ * REPLACE do objeto inteiro. Um campo aceito só por um dos dois seria
+ * apagado em silêncio pelo outro: foi exatamente o que aconteceu com `dose`,
+ * que existia no tipo e na projeção mas nunca no schema de escrita.
+ * Schema único = impossível divergirem.
+ */
+export const ajusteItemSchema = z.object({
+  via: z.enum(VIAS).nullable().optional(),
+  dose: z.string().max(120).nullable().optional(),
+  cuidados: z.string().max(500).nullable().optional(),
+  /** Desloca o item inteiro. Offset em dias a partir do D0. */
+  inicio_dias: z.number().int().min(0).max(3650).nullable().optional(),
+  /** índice ORIGINAL da sessão (1-based) → offset em dias a partir do D0. */
+  sessoes: z.record(z.string(), z.number().int().min(0).max(3650)).optional(),
+});
+
+export const prescricaoAjustesSchema = z.record(z.string(), ajusteItemSchema);
 
 export const createOrcamentoSchema = z.object({
   // identidade
@@ -73,8 +120,8 @@ export const createOrcamentoSchema = z.object({
   protocol_name: z.string().nullable().optional(),
   additional_procedures: z.array(orcamentoProcedureSchema).default([]),
 
-  // contrato modelo (opcional)
-  contract_id: z.string().uuid().nullable().optional(),
+  // documentos que o paciente assina (um PDF, uma assinatura)
+  ...documentosPlanoSchema,
 
   // pagamento
   discount_percent: z.number().int().min(0).max(100).default(0),
@@ -94,6 +141,8 @@ export const createOrcamentoSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data inválida')
     .nullable()
     .optional(),
+  /** Camada clínica ajustada para ESTE paciente. Chave = `protocol_items.id`. */
+  prescricao_ajustes: prescricaoAjustesSchema.optional(),
 }).refine(
   (data) => Boolean(data.payment_method) || Boolean((data.custom_payment_method ?? '').trim()),
   {
@@ -129,6 +178,7 @@ export type CreateProtocol = z.infer<typeof createProtocolSchema>;
 export type UpdateProtocol = z.infer<typeof updateProtocolSchema>;
 export type CreateOrcamento = z.infer<typeof createOrcamentoSchema>;
 export type OrcamentoProcedure = z.infer<typeof orcamentoProcedureSchema>;
+export type AjusteItemInput = z.infer<typeof ajusteItemSchema>;
 export type UpdateProposalStatus = z.infer<typeof updateProposalStatusSchema>;
 export type UpdateCredentials = z.infer<typeof updateCredentialsSchema>;
 export type SearchParams = z.infer<typeof searchSchema>;

@@ -11,7 +11,7 @@ import {
 } from "@/lib/integrations/authentique";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { generatePdfFromHtml } from "@/lib/integrations/pdf";
-import { buildContractHtml } from "@/lib/contracts/build-html";
+import { buildContractsHtml } from "@/lib/contracts/build-html";
 import { storeContractPdf } from "@/lib/contracts/archive";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -61,7 +61,7 @@ export async function POST(req: Request) {
     return jsonError("Authentique não configurada para esta empresa", 400);
   }
 
-  const built = await buildContractHtml({
+  const built = await buildContractsHtml({
     propostaId: body.proposta_id,
     companyId: auth.user.companyId,
   });

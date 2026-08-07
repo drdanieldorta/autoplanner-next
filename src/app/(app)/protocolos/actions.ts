@@ -6,13 +6,14 @@ import { z } from "zod";
 
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { protocolItemSchema } from "@/lib/validations";
+import { documentosPlanoSchema, protocolItemSchema } from "@/lib/validations";
 
 const CreateSchema = z.object({
   name: z.string().trim().min(3, "Nome deve ter pelo menos 3 caracteres").max(120),
   cuidados_gerais: z.string().max(2000).nullable().optional(),
   sinais_alerta: z.string().max(2000).nullable().optional(),
   items: z.array(protocolItemSchema).min(1, "Adicione pelo menos um procedimento"),
+  ...documentosPlanoSchema,
 });
 
 const UpdateSchema = CreateSchema.extend({
@@ -28,6 +29,39 @@ export type ProtocolFormState =
 function nullIfBlank(v: string | null | undefined): string | null {
   const t = (v ?? "").trim();
   return t === "" ? null : t;
+}
+
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * Replace dos documentos do protocolo.
+ *
+ * `ordem` é a posição no array — é ela que decide a sequência das páginas
+ * no PDF, então a ordem da tela precisa chegar intacta até aqui.
+ */
+async function replaceProtocolContracts(
+  supabase: Supabase,
+  protocolId: string,
+  contractIds: string[],
+): Promise<string | null> {
+  const del = await supabase
+    .from("protocol_contracts")
+    .delete()
+    .eq("protocol_id", protocolId);
+  if (del.error) return del.error.message;
+
+  if (contractIds.length === 0) return null;
+
+  // Dedup preservando a ordem: id repetido violaria a PK composta.
+  const unicos = [...new Set(contractIds)];
+  const ins = await supabase.from("protocol_contracts").insert(
+    unicos.map((contract_id, ordem) => ({
+      protocol_id: protocolId,
+      contract_id,
+      ordem,
+    })) as never,
+  );
+  return ins.error?.message ?? null;
 }
 
 function calcTotal(items: z.infer<typeof protocolItemSchema>[]): number {
@@ -63,6 +97,7 @@ export async function createProtocol(
       company_id: user.companyId,
       cuidados_gerais: nullIfBlank(parsed.data.cuidados_gerais),
       sinais_alerta: nullIfBlank(parsed.data.sinais_alerta),
+      incluir_tcle_padrao: parsed.data.incluir_tcle_padrao,
     } as never)
     .select("id")
     .single();
@@ -77,6 +112,8 @@ export async function createProtocol(
   const items = parsed.data.items.map((item) => ({
     ...item,
     via: item.via ?? null,
+    dose: nullIfBlank(item.dose),
+    inicio_dias: item.inicio_dias ?? 0,
     cuidados: nullIfBlank(item.cuidados),
     protocol_id: created.id,
   }));
@@ -88,6 +125,16 @@ export async function createProtocol(
     // cleanup
     await supabase.from("protocols").delete().eq("id", created.id);
     return { ok: false, error: itemsResult.error.message };
+  }
+
+  const docsError = await replaceProtocolContracts(
+    supabase,
+    created.id,
+    parsed.data.contract_ids,
+  );
+  if (docsError) {
+    await supabase.from("protocols").delete().eq("id", created.id);
+    return { ok: false, error: docsError };
   }
 
   revalidatePath("/protocolos");
@@ -117,6 +164,7 @@ export async function updateProtocol(
       total_value_cents: totalCents,
       cuidados_gerais: nullIfBlank(parsed.data.cuidados_gerais),
       sinais_alerta: nullIfBlank(parsed.data.sinais_alerta),
+      incluir_tcle_padrao: parsed.data.incluir_tcle_padrao,
     } as never)
     .eq("id", parsed.data.id)
     .eq("company_id", user.companyId);
@@ -142,6 +190,8 @@ export async function updateProtocol(
   const items = parsed.data.items.map((item) => ({
     ...item,
     via: item.via ?? null,
+    dose: nullIfBlank(item.dose),
+    inicio_dias: item.inicio_dias ?? 0,
     cuidados: nullIfBlank(item.cuidados),
     protocol_id: parsed.data.id,
   }));
@@ -151,6 +201,15 @@ export async function updateProtocol(
     .insert(items as never);
   if (insertResult.error) {
     return { ok: false, error: insertResult.error.message };
+  }
+
+  const docsError = await replaceProtocolContracts(
+    supabase,
+    parsed.data.id,
+    parsed.data.contract_ids,
+  );
+  if (docsError) {
+    return { ok: false, error: docsError };
   }
 
   revalidatePath("/protocolos");

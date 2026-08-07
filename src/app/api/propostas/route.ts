@@ -7,7 +7,10 @@ import {
 } from "@/app/api/_lib/api-helpers";
 import { feegow, FeegowError } from "@/lib/integrations/feegow";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
+import { limparAjustes } from "@/lib/prescricao/ajustes";
+import { VIAS } from "@/lib/prescricao/enums";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { prescricaoAjustesSchema } from "@/lib/validations";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +21,22 @@ const ProcedimentoSchema = z.object({
   value_cents: z.number().int().nonnegative(),
   discount_percent: z.number().int().min(0).max(100).default(0),
   interval_days: z.number().int().nonnegative().default(0),
+});
+
+/**
+ * Procedimento avulso: o mesmo, mais a camada clínica.
+ *
+ * Ela vive SÓ aqui, e não em `procedimentos`, porque `procedimentos` é o que
+ * alimenta a proposta da Feegow — que não tem campo para via, dose ou
+ * cuidados. O avulso não tem linha em `protocol_items` para desviar, então
+ * este JSONB é o lar definitivo da camada clínica dele, e é daqui que
+ * `loadPrescricaoFonte` a lê.
+ */
+const ProcedimentoAdicionalSchema = ProcedimentoSchema.extend({
+  via: z.enum(VIAS).nullable().optional(),
+  dose: z.string().max(120).nullable().optional(),
+  inicio_dias: z.number().int().min(0).max(3650).optional(),
+  cuidados: z.string().max(500).nullable().optional(),
 });
 
 const BodySchema = z.object({
@@ -39,10 +58,18 @@ const BodySchema = z.object({
 
   protocolo_id: z.string().uuid().nullable().optional(),
   protocolo_nome: z.string().nullable().optional(),
-  contract_id: z.string().uuid().nullable().optional(),
+
+  // Documentos que o paciente assina. Viram linhas em `proposta_contracts`
+  // (na ordem do array) e o booleano do TCLE code-driven. `contract_id`
+  // não é mais aceita: a migration migrou os dados e a coluna virou legado.
+  contract_ids: z.array(z.string().uuid()).optional().default([]),
+  incluir_tcle_padrao: z.boolean().optional().default(false),
 
   procedimentos: z.array(ProcedimentoSchema).min(1),
-  procedimentos_adicionais: z.array(ProcedimentoSchema).optional().default([]),
+  procedimentos_adicionais: z
+    .array(ProcedimentoAdicionalSchema)
+    .optional()
+    .default([]),
   valor_total_cents: z.number().int().nonnegative(),
   discount_percent: z.number().int().min(0).max(100).default(0),
 
@@ -60,6 +87,10 @@ const BodySchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .nullable()
     .optional(),
+  // ⚠️ Zod não-estrito DESCARTA chave desconhecida em silêncio: sem esta
+  // entrada, o delta definido na criação do orçamento sumiria sem erro
+  // nenhum, e a folha sairia com a camada clínica do protocolo puro.
+  prescricao_ajustes: prescricaoAjustesSchema.optional(),
 });
 
 type Body = z.infer<typeof BodySchema>;
@@ -147,7 +178,7 @@ export async function POST(req: Request) {
       profissional_sys_user: body.profissional_sys_user ?? null,
       protocolo_id: body.protocolo_id ?? null,
       protocolo_nome: body.protocolo_nome ?? null,
-      contract_id: body.contract_id ?? null,
+      incluir_tcle_padrao: body.incluir_tcle_padrao,
       procedimentos_adicionais: body.procedimentos_adicionais ?? [],
       valor_total_cents: body.valor_total_cents,
       discount_percent: body.discount_percent,
@@ -160,6 +191,7 @@ export async function POST(req: Request) {
       paciente_alergias: body.paciente_alergias?.trim() || null,
       observacoes: body.observacoes?.trim() || null,
       prescricao_inicio: body.prescricao_inicio ?? null,
+      prescricao_ajustes: limparAjustes(body.prescricao_ajustes ?? {}),
       id_proposta_api,
       user_id: auth.user.id,
       company_id: auth.user.companyId,
@@ -171,6 +203,27 @@ export async function POST(req: Request) {
     return jsonError(insertResult.error.message, 500);
   }
   const created = insertResult.data as { id: string };
+
+  // Vínculos dos documentos. `ordem` é a posição no array — é ela que decide
+  // a sequência das páginas no PDF único que o paciente assina.
+  const contractIds = [...new Set(body.contract_ids)];
+  if (contractIds.length > 0) {
+    const vinculos = await admin.from("proposta_contracts").insert(
+      contractIds.map((contract_id, ordem) => ({
+        proposta_id: created.id,
+        contract_id,
+        ordem,
+      })) as never,
+    );
+    // Não derruba o orçamento, que já existe e custou uma chamada à Feegow.
+    // O envio do contrato falha com mensagem clara ("nenhum documento
+    // selecionado") e a seleção é corrigível na tela de detalhe.
+    if (vinculos.error) {
+      console.error(
+        `[propostas] falha ao vincular documentos da proposta ${created.id}: ${vinculos.error.message}`,
+      );
+    }
+  }
 
   // ───────── 3. Authentique em background (Fase 5) ─────────
   // O envio para assinatura digital + geração de PDF + upload Feegow

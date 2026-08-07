@@ -29,9 +29,17 @@ import type { PlanoExecucao } from "@/lib/prescricao/types";
  *
  * Sobre o NOME do documento: sob a COFEN 358/2009, "prescrição de
  * enfermagem" é o ato privativo do enfermeiro dentro do Processo de
- * Enfermagem — não é ordem médica. E sem dose/diluente/velocidade este
- * documento não é prescrição de ninguém. Por isso ele se intitula
- * CRONOGRAMA DE APLICAÇÕES e o rodapé diz explicitamente o que ele não é.
+ * Enfermagem — não é ordem médica. Por isso o documento se intitula
+ * CRONOGRAMA DE APLICAÇÕES e o rodapé declara o que ele não é.
+ *
+ * ⚠️ DOSE (2026-08-07): a dose passou a ser OPCIONAL por item. Enquanto
+ * nenhum item do plano tiver dose, o documento sai exatamente como antes
+ * — inclusive o rodapé afirmando que não informa dose. Assim que qualquer
+ * item tiver, a coluna DOSE aparece e o rodapé TROCA de texto, porque
+ * aquela afirmação passaria a ser falsa. Diluente e velocidade de infusão
+ * continuam fora de escopo, e o rodapé segue declarando isso nos dois
+ * casos. Se dose virar rotina, revisitar a questão da assinatura do
+ * prescritor — hoje ele consta como referência, não como signatário.
  */
 
 function buildCss(branding?: DocumentBranding): string {
@@ -85,6 +93,7 @@ function buildCss(branding?: DocumentBranding): string {
   table.grid .n { width: 22px; color: #6b7280; }
   table.grid .cuid { color: #444; font-size: 9.5px; padding-top: 0; border-bottom: 1px solid #e5e7eb; }
 
+  .dose { font-family: monospace; font-weight: bold; }
   .via { font-family: monospace; font-weight: bold; font-size: 11px; letter-spacing: 0.04em; }
   .via.falta { color: #111; background: #fde68a; padding: 1px 4px; }
 
@@ -128,6 +137,20 @@ export const ORIENTACOES_ENFERMAGEM: string[] = [
   "Registrar data, hora, executante e COREN na grade de aplicações desta folha.",
   "Em caso de dúvida sobre qualquer item, NÃO administrar — esclarecer antes.",
 ];
+
+/**
+ * Orientações da folha. A menção a "dose" entra apenas quando o plano tem
+ * dose: uma clínica que não usa a feature não pode ver o texto do documento
+ * dela mudar sozinho.
+ */
+function orientacoesPara(temDose: boolean): string[] {
+  if (!temDose) return ORIENTACOES_ENFERMAGEM;
+  return ORIENTACOES_ENFERMAGEM.map((o) =>
+    o.startsWith("Conferir item, via e cuidados")
+      ? o.replace("Conferir item, via e cuidados", "Conferir item, via, dose e cuidados")
+      : o,
+  );
+}
 
 function escapeHtml(s: string): string {
   return s
@@ -250,6 +273,10 @@ export function renderFolhaExecucao(
   ].join("");
 
   // ── Tabela 1: o que aplicar ──────────────────────────────────────────
+  // Coluna de dose só existe quando alguém preencheu alguma. Coluna vazia
+  // em todas as linhas é ruído num documento de bancada.
+  const temDose = plano.itens.some((i) => Boolean(i.dose));
+
   const itensRows = plano.itens.length
     ? plano.itens
         .map((item, i) => {
@@ -258,17 +285,18 @@ export function renderFolhaExecucao(
               ? `1 sessão${item.quantity > 1 ? ` (${item.quantity} aplicações)` : ""}`
               : `${item.quantity} ${plural(item.quantity, "sessão", "sessões")} · a cada ${item.interval_days} ${plural(item.interval_days, "dia", "dias")}`;
           const cuid = item.cuidados
-            ? `<tr><td class="cuid"></td><td class="cuid" colspan="3">↳ ${escapeHtml(item.cuidados)}</td></tr>`
+            ? `<tr><td class="cuid"></td><td class="cuid" colspan="${temDose ? 4 : 3}">↳ ${escapeHtml(item.cuidados)}</td></tr>`
             : "";
           return `<tr>
               <td class="n">${i + 1}</td>
               <td>${escapeHtml(item.procedure_name)}</td>
               <td>${viaHtml(item.via, item.via_inferida)}</td>
+              ${temDose ? `<td class="dose">${item.dose ? escapeHtml(item.dose) : "—"}</td>` : ""}
               <td>${escapeHtml(sessoesTxt)}</td>
             </tr>${cuid}`;
         })
         .join("")
-    : `<tr><td colspan="4" style="text-align:center;color:#9ca3af;font-style:italic;padding:10px 0;">Nenhum item</td></tr>`;
+    : `<tr><td colspan="${temDose ? 5 : 4}" style="text-align:center;color:#9ca3af;font-style:italic;padding:10px 0;">Nenhum item</td></tr>`;
 
   // ── Tabela 2: quando fazer (com colunas em branco para a execução) ───
   const agendaRows = plano.agenda.length
@@ -278,7 +306,8 @@ export function renderFolhaExecucao(
             .map((it) => {
               const rep = it.repeticoes > 1 ? ` ×${it.repeticoes}` : "";
               const via = viaSufixo(it.procedure_name, it.via);
-              return `${escapeHtml(it.procedure_name)}${escapeHtml(via)}${rep} <span style="color:#6b7280">(${escapeHtml(it.sessao)})</span>`;
+              const dose = it.dose ? ` ${it.dose}` : "";
+              return `${escapeHtml(it.procedure_name)}${escapeHtml(via)}${escapeHtml(dose)}${rep} <span style="color:#6b7280">(${escapeHtml(it.sessao)})</span>`;
             })
             .join("<br/>");
           return `<tr>
@@ -301,7 +330,7 @@ export function renderFolhaExecucao(
       ? `<div class="supersede">Revisão ${plano.revisao} — substitui as revisões anteriores. Descartar cópias impressas anteriores.</div>`
       : "";
 
-  const orientacoesHtml = ORIENTACOES_ENFERMAGEM.map(
+  const orientacoesHtml = orientacoesPara(temDose).map(
     (o) => `<li>${escapeHtml(o)}</li>`,
   ).join("");
 
@@ -372,7 +401,7 @@ ${blocos}
 
 <div class="sec">Aplicações — o que preparar</div>
 <table class="grid">
-  <thead><tr><th class="n">#</th><th>Item</th><th style="width:110px">Via</th><th style="width:190px">Sessões</th></tr></thead>
+  <thead><tr><th class="n">#</th><th>Item</th><th style="width:110px">Via</th>${temDose ? `<th style="width:110px">Dose</th>` : ""}<th style="width:190px">Sessões</th></tr></thead>
   <tbody>${itensRows}</tbody>
 </table>
 
@@ -399,8 +428,11 @@ ${blocos}
   Documento gerado automaticamente a partir do protocolo contratado.
   <strong>Não constitui prescrição médica nem prescrição de enfermagem</strong>
   e não substitui a avaliação clínica à beira do paciente.
-  Não informa dose, diluição ou velocidade de infusão: conferir a prescrição
-  de registro do paciente antes de qualquer preparo ou administração.
+  ${
+    temDose
+      ? `As doses indicadas foram definidas pelo profissional responsável e devem ser conferidas contra a prescrição de registro antes do preparo. Não informa diluição nem velocidade de infusão.`
+      : `Não informa dose, diluição ou velocidade de infusão: conferir a prescrição de registro do paciente antes de qualquer preparo ou administração.`
+  }
   Paciente ${ou(plano.paciente.nome)} · CPF ${cpfMascarado(plano.paciente.cpf)} · Ref. ${ou(plano.proposta_ref)} · rev. ${plano.revisao}
 </div>
 </div>
