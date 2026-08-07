@@ -4,7 +4,7 @@ import {
   jsonError,
   requireUserWithCompanyOr401,
 } from "@/app/api/_lib/api-helpers";
-import { buildContractHtml } from "@/lib/contracts/build-html";
+import { buildContractsHtml } from "@/lib/contracts/build-html";
 import { readContractPdf } from "@/lib/contracts/archive";
 import { authentique } from "@/lib/integrations/authentique";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
@@ -121,7 +121,7 @@ export async function GET(
   }
 
   if (!pdf) {
-    const built = await buildContractHtml({
+    const built = await buildContractsHtml({
       propostaId,
       companyId: auth.user.companyId,
     });

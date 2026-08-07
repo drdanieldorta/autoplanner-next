@@ -58,7 +58,12 @@ const BodySchema = z.object({
 
   protocolo_id: z.string().uuid().nullable().optional(),
   protocolo_nome: z.string().nullable().optional(),
-  contract_id: z.string().uuid().nullable().optional(),
+
+  // Documentos que o paciente assina. Viram linhas em `proposta_contracts`
+  // (na ordem do array) e o booleano do TCLE code-driven. `contract_id`
+  // não é mais aceita: a migration migrou os dados e a coluna virou legado.
+  contract_ids: z.array(z.string().uuid()).optional().default([]),
+  incluir_tcle_padrao: z.boolean().optional().default(false),
 
   procedimentos: z.array(ProcedimentoSchema).min(1),
   procedimentos_adicionais: z
@@ -173,7 +178,7 @@ export async function POST(req: Request) {
       profissional_sys_user: body.profissional_sys_user ?? null,
       protocolo_id: body.protocolo_id ?? null,
       protocolo_nome: body.protocolo_nome ?? null,
-      contract_id: body.contract_id ?? null,
+      incluir_tcle_padrao: body.incluir_tcle_padrao,
       procedimentos_adicionais: body.procedimentos_adicionais ?? [],
       valor_total_cents: body.valor_total_cents,
       discount_percent: body.discount_percent,
@@ -198,6 +203,27 @@ export async function POST(req: Request) {
     return jsonError(insertResult.error.message, 500);
   }
   const created = insertResult.data as { id: string };
+
+  // Vínculos dos documentos. `ordem` é a posição no array — é ela que decide
+  // a sequência das páginas no PDF único que o paciente assina.
+  const contractIds = [...new Set(body.contract_ids)];
+  if (contractIds.length > 0) {
+    const vinculos = await admin.from("proposta_contracts").insert(
+      contractIds.map((contract_id, ordem) => ({
+        proposta_id: created.id,
+        contract_id,
+        ordem,
+      })) as never,
+    );
+    // Não derruba o orçamento, que já existe e custou uma chamada à Feegow.
+    // O envio do contrato falha com mensagem clara ("nenhum documento
+    // selecionado") e a seleção é corrigível na tela de detalhe.
+    if (vinculos.error) {
+      console.error(
+        `[propostas] falha ao vincular documentos da proposta ${created.id}: ${vinculos.error.message}`,
+      );
+    }
+  }
 
   // ───────── 3. Authentique em background (Fase 5) ─────────
   // O envio para assinatura digital + geração de PDF + upload Feegow

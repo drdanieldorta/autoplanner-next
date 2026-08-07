@@ -182,7 +182,56 @@ npm install --legacy-peer-deps
   - [x] Permissões finas em `user_tool_permissions` — `lib/services/user-tools.ts` (listToolsForUser + getFuncionarioToolPermissions). Endpoint `GET /api/funcionarios/[id]/permissions` para lazy-load no dialog. Server Action `setFuncionarioToolPermissions` (delete-then-insert idempotente). Botão `<PermissoesDialog>` na listagem de funcionários (admins recebem botão disabled — acesso implícito). `/minhas-ferramentas` saiu do `<ComingSoon>`: Server Component que para admin lista todas as `company_tools.enabled`, para não-admin filtra por `user_tool_permissions`. Mapa nome→rota replica heurístico do Vite legacy. 33 rotas no build, lint clean.
 - [x] **Fase 5.1: Cronograma de aplicações (enfermagem)** — camada clínica mínima no protocolo (`protocols.cuidados_gerais/sinais_alerta`, `protocol_items.via/cuidados`) + `lib/prescricao/*` (módulos neutros: `projetarPlano` pura, `canonicalJson` para idempotência) + renderizador code-driven `templates/default-execucao.ts` + `POST /api/prescricoes/gerar` e `GET /api/prescricoes/[id]/pdf`. Anexa ao prontuário Feegow via `/patient/upload-base64`, encadeado automaticamente após o envio do contrato. 35 rotas no build. Ver "Cronograma de aplicações" abaixo.
 - [x] **Fase 5.2: Camada clínica na criação do orçamento** — a grade clínica (via, dose, começa em, observações) passou a existir também em `/orcamentos/novo`, gravando no MESMO delta `prescricao_ajustes` que o editor de cronograma já usava, e nos avulsos gravando dentro de `procedimentos_adicionais`. `<ClinicalGrid>` + `<DuracaoInput>` compartilhados com o form de protocolo. Corrigidos 3 defeitos verificados: o `map` em `orcamentos/novo/page.tsx` descartava `id`/`via`/`dose`/`inicio_dias`/`cuidados`; `AjusteItemSchema` não aceitava `dose` (tornando dose por paciente inalcançável, e — com `salvarAjustes` fazendo replace — apagável); e a contagem "sem via" era falso positivo estrutural, acusando todo item de todo protocolo.
+- [x] **Fase 5.3: Vários documentos por plano, numa assinatura só** — `protocol_contracts` + `proposta_contracts` (join com `ordem`) e `incluir_tcle_padrao` em ambos. `buildContractHtml` virou `buildContractsHtml`, refatorada em fragmento + shell. `<DocumentosSelector>` compartilhado por protocolo e orçamento. Ver "Documentos do plano" abaixo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
+
+## Documentos do plano (contrato + termos)
+
+Um plano manda **vários documentos** — contrato de prestação, TCLE, termo de imagem —
+e o paciente **assina uma vez**.
+
+**A restrição que define o desenho:** `createDocument` da Authentique recebe
+`$file: Upload!` — **singular**, um arquivo por documento
+([authentique.ts](src/lib/integrations/authentique.ts)). Uma assinatura para vários
+papéis só existe concatenando os papéis num PDF. Isso é sorte, não limitação: tudo
+abaixo do PDF segue **1:1 e intocado** — `propostas.document_id`, o webhook que
+resolve a proposta por `document_id`, o acervo em `contracts/archive.ts` e o anexo
+único no prontuário Feegow.
+
+**Seleção:** o protocolo define o padrão (`protocol_contracts` + `protocols.incluir_tcle_padrao`),
+o orçamento copia e ajusta (`proposta_contracts` + `propostas.incluir_tcle_padrao`).
+Mesmo padrão mental da folha de enfermagem: protocolo propõe, orçamento dispõe.
+`ordem` na tabela de junção é a sequência das páginas.
+
+**O TCLE padrão não é linha em `contracts`** — é código (`renderDefaultSystemContract`).
+Por isso é booleano, não id, e entra **sempre por último**. Não é mais pré-marcado:
+selecionar documento virou ato explícito.
+
+**`propostas.contract_id` é LEGADO.** A migration fez o backfill dela para
+`proposta_contracts` e — a linha que mais importava — marcou `incluir_tcle_padrao`
+nas 189 propostas sem `contract_id`, porque ali "sem contrato" *significava* "manda o
+TCLE". Sem essa linha, todo orçamento antigo ficaria sem documento nenhum. A coluna
+segue na tabela com `COMMENT`; não é mais lida. Não derrubar em produção.
+
+**Montagem — fragmento + shell** ([build-html.ts](src/lib/contracts/build-html.ts)):
+cada documento produz só o corpo, e um `montarShell` junta tudo num `<html>` com
+`.doc + .doc { page-break-before: always }`. Três coisas não podem ser quebradas:
+
+- **O CSS do TCLE é ESCOPADO** (`buildDefaultContractCss(".doc-tcle")`). O contrato do
+  usuário é HTML arbitrário e divide a folha de estilo: um `<table class="proc">` ou
+  uma `.header-wrap` no texto dele herdaria o estilo do template se as regras fossem
+  globais. Verificado renderizando um contrato com classes deliberadamente colidentes.
+- **NÃO resetar a margem do `body`.** São os 8px default do navegador, que sempre
+  valeram — zerá-los desloca ~2mm todo contrato já emitido. O padding de página vive
+  no wrapper de cada documento (`.doc-custom` 20mm, `.doc-tcle` 20mm 15mm), que é
+  exatamente o que estava no `body` antes.
+- **Guarda de pacote vazio:** zero modelos + TCLE desmarcado ⇒ 422 com mensagem clara,
+  nunca um PDF em branco para o paciente assinar. Consequência direta de o TCLE ter
+  deixado de ser pré-marcado. O formulário também barra antes de criar o orçamento —
+  não existe tela para corrigir a seleção depois.
+
+Regressão verificada empiricamente: pacote de UM documento sai **pixel a pixel
+idêntico** ao de antes do refactor (6 páginas rasterizadas, PNGs iguais byte a byte).
 
 ## Cronograma de aplicações (folha de enfermagem)
 

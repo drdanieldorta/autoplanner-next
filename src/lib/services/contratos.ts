@@ -42,6 +42,35 @@ export async function getContractById(args: {
   return (result.data ?? null) as Contract | null;
 }
 
+/**
+ * Documentos vinculados a uma proposta, em ordem.
+ *
+ * Usado pela tela de detalhe do orçamento. A MONTAGEM do PDF não passa por
+ * aqui: `build-html.ts` faz a leitura com o admin client, como todo o resto
+ * daquele arquivo.
+ */
+export async function listPropostaContracts(args: {
+  propostaId: string;
+}): Promise<Array<{ id: string; name: string; ordem: number }>> {
+  const supabase = await createClient();
+  const result = await supabase
+    .from("proposta_contracts")
+    .select("contract_id, ordem, contracts(id, name)")
+    .eq("proposta_id", args.propostaId)
+    .order("ordem", { ascending: true });
+  if (result.error) throw new Error(result.error.message);
+
+  return ((result.data ?? []) as unknown as Array<{
+    contract_id: string;
+    ordem: number;
+    contracts: { id: string; name: string } | null;
+  }>).map((row) => ({
+    id: row.contract_id,
+    name: row.contracts?.name ?? "Documento removido",
+    ordem: row.ordem,
+  }));
+}
+
 // CONTRACT_VARIABLES vive em @/lib/contracts/variables (sem `import "server-only"`)
 // para que possa ser usado tanto em Server Components quanto em Client Components
 // (ex: editor de contrato).

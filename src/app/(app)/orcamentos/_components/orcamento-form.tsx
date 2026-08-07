@@ -46,6 +46,10 @@ import {
   type ClinicalPatch,
   type ClinicalRow,
 } from "../../_components/clinical-grid";
+import {
+  DocumentosSelector,
+  type ContractOption,
+} from "../../_components/documentos-selector";
 
 import type {
   OrcamentoPatientOption,
@@ -71,17 +75,21 @@ type ProtocolItem = {
   cuidados: string | null;
 };
 
+type ProtocolOptionDocs = {
+  /** Documentos que o protocolo propõe, na ordem definida nele. */
+  contractIds: string[];
+  incluirTcle: boolean;
+};
+
 /** Prefixo que separa linha de avulso de linha de protocolo na grade. */
 const EXTRA = "extra#";
 
-type ProtocolOption = {
+type ProtocolOption = ProtocolOptionDocs & {
   id: string;
   name: string;
   total_value_cents: number;
   items: ProtocolItem[];
 };
-
-type ContractOption = { id: string; name: string };
 
 type Props = {
   hasFeegow: boolean;
@@ -161,7 +169,10 @@ export function OrcamentoForm({
       protocol_id: null,
       protocol_name: null,
       additional_procedures: [],
-      contract_id: null,
+      // Nada pré-marcado: selecionar documento é ato explícito. Escolher um
+      // protocolo traz a seleção dele.
+      contract_ids: [],
+      incluir_tcle_padrao: false,
       discount_percent: 0,
       payment_method: null,
       custom_payment_method: "",
@@ -190,6 +201,8 @@ export function OrcamentoForm({
   const customPaymentMethod = form.watch("custom_payment_method");
   const installments = form.watch("installments") ?? 1;
   const prescricaoInicio = form.watch("prescricao_inicio");
+  const contractIds = form.watch("contract_ids");
+  const incluirTcle = form.watch("incluir_tcle_padrao");
 
   const selectedPatient = useMemo(
     () => patients.find((p) => p.id === patientId),
@@ -274,6 +287,8 @@ export function OrcamentoForm({
       form.setValue("protocol_id", null);
       form.setValue("protocol_name", null);
       setProtocolItems([]);
+      form.setValue("contract_ids", []);
+      form.setValue("incluir_tcle_padrao", false);
       return;
     }
     const protocol = protocols.find((p) => p.id === id);
@@ -281,6 +296,10 @@ export function OrcamentoForm({
     form.setValue("protocol_id", id);
     form.setValue("protocol_name", protocol.name);
     setProtocolItems(protocol.items);
+    // Protocolo propõe, orçamento dispõe: a seleção dele entra marcada e
+    // segue editável abaixo.
+    form.setValue("contract_ids", protocol.contractIds);
+    form.setValue("incluir_tcle_padrao", protocol.incluirTcle);
   };
 
   /**
@@ -453,6 +472,21 @@ export function OrcamentoForm({
       return;
     }
 
+    // Salvar sem documento é legítimo (rascunho); ENVIAR não é. Barrar aqui
+    // evita criar o orçamento e só então descobrir, no encadeamento do
+    // envio, que não havia o que assinar — hoje não há tela para corrigir a
+    // seleção depois que o orçamento existe.
+    if (
+      submitAction === "save_and_send" &&
+      values.contract_ids.length === 0 &&
+      !values.incluir_tcle_padrao
+    ) {
+      toast.error(
+        "Selecione ao menos um documento para o paciente assinar, ou marque o contrato padrão do sistema.",
+      );
+      return;
+    }
+
     // Combina procedimentos do protocolo com os extras antes de enviar.
     // O endpoint exige procedimentos.length >= 1.
     //
@@ -496,7 +530,8 @@ export function OrcamentoForm({
       profissional_sys_user: values.professional_sys_user || undefined,
       protocolo_id: values.protocol_id || null,
       protocolo_nome: values.protocol_name || null,
-      contract_id: values.contract_id || null,
+      contract_ids: values.contract_ids,
+      incluir_tcle_padrao: values.incluir_tcle_padrao,
       procedimentos: allProcedures,
       procedimentos_adicionais: values.additional_procedures,
       valor_total_cents: totalCents,
@@ -986,31 +1021,28 @@ export function OrcamentoForm({
             )}
           </div>
 
-          {/* Modelo de contrato */}
+          {/* Documentos que o paciente assina */}
           <div className="pt-4 border-t">
             <Label className="text-sm font-medium text-muted-foreground">
-              Modelo de contrato
+              Documentos para assinatura
             </Label>
-            <Select
-              value={form.watch("contract_id") ?? "default"}
-              onValueChange={(value) =>
-                form.setValue("contract_id", value === "default" ? null : value)
+            <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+              {protocolId
+                ? "Veio do protocolo selecionado. Ajustar aqui não altera o protocolo."
+                : "Escolha o que este paciente vai assinar."}
+            </p>
+            <DocumentosSelector
+              idPrefix="orc"
+              contracts={contracts}
+              selecionados={contractIds}
+              incluirTcle={incluirTcle}
+              onChangeSelecionados={(ids) =>
+                form.setValue("contract_ids", ids, { shouldDirty: true })
               }
-            >
-              <SelectTrigger className="mt-1">
-                <SelectValue placeholder="Contrato padrão do sistema" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="default">
-                  Contrato padrão do sistema
-                </SelectItem>
-                {contracts.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onChangeIncluirTcle={(v) =>
+                form.setValue("incluir_tcle_padrao", v, { shouldDirty: true })
+              }
+            />
           </div>
 
           {/* Adicionar procedimento extra */}

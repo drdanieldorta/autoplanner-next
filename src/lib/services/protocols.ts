@@ -16,13 +16,39 @@ export type Protocol = Pick<
   | "total_value_cents"
   | "cuidados_gerais"
   | "sinais_alerta"
+  | "incluir_tcle_padrao"
 > & {
   itemsCount: number;
 };
 
 export type ProtocolWithItems = Protocol & {
   items: ProtocolItemRow[];
+  /** Modelos de documento que este protocolo propõe, em ordem. */
+  contractIds: string[];
 };
+
+/** Vínculos de documento de um conjunto de protocolos, já em ordem. */
+async function loadContractIds(
+  protocolIds: string[],
+): Promise<Record<string, string[]>> {
+  if (protocolIds.length === 0) return {};
+  const supabase = await createClient();
+  const result = await supabase
+    .from("protocol_contracts")
+    .select("protocol_id, contract_id, ordem")
+    .in("protocol_id", protocolIds)
+    .order("ordem", { ascending: true });
+  if (result.error) throw new Error(result.error.message);
+
+  const porProtocolo: Record<string, string[]> = {};
+  for (const row of (result.data ?? []) as Array<{
+    protocol_id: string;
+    contract_id: string;
+  }>) {
+    (porProtocolo[row.protocol_id] ??= []).push(row.contract_id);
+  }
+  return porProtocolo;
+}
 
 /**
  * Lista protocolos da empresa do usuário logado.
@@ -37,7 +63,7 @@ export async function listProtocols(args: {
   let query = supabase
     .from("protocols")
     .select(
-      `id, name, created_at, updated_at, total_value_cents, cuidados_gerais, sinais_alerta, protocol_items(count)`,
+      `id, name, created_at, updated_at, total_value_cents, cuidados_gerais, sinais_alerta, incluir_tcle_padrao, protocol_items(count)`,
     )
     .eq("company_id", args.companyId);
 
@@ -60,6 +86,7 @@ export async function listProtocols(args: {
       total_value_cents: r.total_value_cents ?? 0,
       cuidados_gerais: r.cuidados_gerais ?? null,
       sinais_alerta: r.sinais_alerta ?? null,
+      incluir_tcle_padrao: r.incluir_tcle_padrao ?? false,
       itemsCount: r.protocol_items?.[0]?.count ?? 0,
     };
   });
@@ -94,9 +121,11 @@ export async function listProtocolsWithItems(args: {
     },
     {},
   );
+  const contractsByProtocol = await loadContractIds(protocols.map((p) => p.id));
   return protocols.map((p) => ({
     ...p,
     items: itemsByProtocol[p.id] ?? [],
+    contractIds: contractsByProtocol[p.id] ?? [],
   }));
 }
 
@@ -113,7 +142,7 @@ export async function getProtocolById(args: {
     // esquecida aqui não fica "sem aparecer", ela é APAGADA no primeiro
     // salvamento.
     .select(
-      "id, name, created_at, updated_at, total_value_cents, company_id, cuidados_gerais, sinais_alerta",
+      "id, name, created_at, updated_at, total_value_cents, company_id, cuidados_gerais, sinais_alerta, incluir_tcle_padrao",
     )
     .eq("id", args.id)
     .eq("company_id", args.companyId)
@@ -128,6 +157,8 @@ export async function getProtocolById(args: {
     .order("created_at", { ascending: true });
   const items = (itemsResult.data ?? []) as ProtocolItemRow[];
 
+  const contractsByProtocol = await loadContractIds([args.id]);
+
   return {
     id: protocol.id,
     name: protocol.name,
@@ -136,7 +167,9 @@ export async function getProtocolById(args: {
     total_value_cents: protocol.total_value_cents ?? 0,
     cuidados_gerais: protocol.cuidados_gerais ?? null,
     sinais_alerta: protocol.sinais_alerta ?? null,
+    incluir_tcle_padrao: protocol.incluir_tcle_padrao ?? false,
     itemsCount: items.length,
     items,
+    contractIds: contractsByProtocol[args.id] ?? [],
   };
 }

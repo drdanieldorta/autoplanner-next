@@ -2,7 +2,6 @@ import "server-only";
 
 import { formatBRL, formatCPF, formatDateExtenso } from "@/lib/contracts/render";
 import {
-  renderBrandingCss,
   renderBrandingHeader,
   type DocumentBranding,
 } from "@/lib/branding/document";
@@ -14,9 +13,12 @@ import { resolveDocPalette } from "@/lib/branding/palette";
  * `default-contract-preview-dialog.tsx` do Vite legacy, com Tailwind
  * convertido para inline styles (Puppeteer não carrega CSS externo).
  *
- * Quando o usuário NÃO seleciona um contrato em `contracts.content`,
- * `envio-manual/route.ts` chama esta função para gerar o HTML que será
- * convertido em PDF.
+ * Quando o orçamento marca "contrato padrão do sistema", `build-html.ts`
+ * chama esta função para produzir o FRAGMENTO que entra no PDF.
+ *
+ * ⚠️ Devolve fragmento (só o corpo), não documento completo — vários
+ * documentos dividem um `<html>` só para o paciente assinar uma vez. O CSS
+ * sai por `buildDefaultContractCss(scope)`, escopado.
  *
  * Diferente do replaceContractVariables (substituição cega de
  * `{{var}}`), aqui a lógica é code-driven — termos IM/EV/Implante são
@@ -40,13 +42,27 @@ export type DefaultContractContext = {
 };
 
 /**
- * CSS do documento.
+ * CSS do documento, ESCOPADO sob `scope`.
+ *
+ * O escopo não é preciosismo: desde que vários documentos passaram a
+ * compartilhar um `<html>` só, o conteúdo do contrato do usuário — HTML
+ * arbitrário, escrito no editor — divide a folha de estilo com este
+ * template. Um `<table>` ou uma `.header` no texto do usuário herdaria as
+ * regras daqui se elas fossem globais.
+ *
+ * `${scope}` recebe o que antes estava em `body` (fonte, cor, padding),
+ * porque agora o documento é uma `<div>` dentro do shell. O offset final é
+ * idêntico: o `body` continua com a margem default do navegador e a página
+ * continua com as margens de `generatePdfFromHtml`.
  *
  * Sem identidade configurada, cada elemento mantém exatamente a cor que
  * tinha antes desta feature — empresa que não cadastrou marca continua
  * gerando o contrato idêntico ao de antes.
  */
-function buildCss(branding?: DocumentBranding): string {
+export function buildDefaultContractCss(
+  scope: string,
+  branding?: DocumentBranding,
+): string {
   const palette = branding?.palette ?? resolveDocPalette(null, null);
   const branded = branding?.hasBranding ?? false;
   const headerBorder = branded ? palette.primary : "#111";
@@ -55,42 +71,42 @@ function buildCss(branding?: DocumentBranding): string {
   const tableHeadBorder = branded ? palette.primary : "#9ca3af";
 
   return `
-  body { font-family: Arial, sans-serif; font-size: 11px; line-height: 1.55; color: #111; padding: 20mm 15mm; }
-  h1.header { text-align: center; font-size: 13px; font-weight: bold; letter-spacing: 0.06em; text-transform: uppercase; margin: 0; }
-  .header-wrap { text-align: center; border-bottom: 2px solid ${headerBorder}; padding-bottom: 10px; margin-bottom: 16px; }
-  .header-meta { margin-top: 6px; font-size: 10px; color: #666; }
-  p.intro { font-size: 11px; line-height: 1.55; margin-bottom: 14px; text-align: justify; }
-  .section-title { background: ${sectionBg}; color: ${sectionFg}; padding: 6px 12px; text-align: center; font-weight: bold; font-size: 11px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-  table.proc { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 16px; }
-  table.proc th { text-align: left; padding: 6px 0; border-bottom: 2px solid ${tableHeadBorder}; font-weight: bold; }
-  table.proc th.qty { text-align: right; width: 100px; }
-  table.proc td { padding: 6px 0; border-bottom: 1px solid #e5e7eb; }
-  table.proc td.qty { text-align: right; }
-  .values { font-size: 11px; margin-bottom: 16px; }
-  .values .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
-  .values .row.total { font-weight: bold; padding-top: 8px; border-top: 1px solid #d1d5db; margin-top: 8px; }
-  .pay-list { font-size: 11px; margin-left: 16px; }
-  .pay-list .opt { margin-bottom: 4px; }
-  .pay-list .opt .mark { font-family: monospace; margin-right: 8px; }
-  .pay-list .credit-detail { margin-left: 32px; margin-top: 4px; }
-  .pay-custom { font-size: 11px; padding: 12px; background: #fafafa; border: 1px solid #d1d5db; border-radius: 4px; margin-left: 16px; }
-  .terms { font-size: 10.5px; margin-bottom: 16px; }
-  .terms p { line-height: 1.55; margin: 0 0 6px 0; text-align: justify; }
-  .terms .header { font-weight: bold; text-transform: uppercase; margin-bottom: 10px; font-size: 11px; }
-  hr.dashed { border: 0; border-top: 1px dashed #d1d5db; margin: 14px 0; }
-  .additional-term { margin-top: 24px; page-break-before: always; }
-  .additional-term h2 { text-align: center; font-size: 12px; font-weight: bold; letter-spacing: 0.04em; border-top: 2px solid #9ca3af; padding-top: 18px; margin-bottom: 14px; }
-  .additional-term .sub { font-weight: bold; font-size: 11px; margin: 0 0 6px 0; }
-  .additional-term p { font-size: 10.5px; line-height: 1.55; text-align: justify; margin: 0 0 4px 0; }
-  .anexo { margin-top: 24px; page-break-before: always; }
-  .anexo h2 { text-align: center; font-size: 12px; font-weight: bold; border-top: 2px solid #9ca3af; padding-top: 18px; margin-bottom: 14px; }
-  .anexo .body { font-size: 10.5px; line-height: 1.55; text-align: justify; white-space: pre-line; }
-  .signature { margin-top: 24px; font-size: 11px; }
-  .signature .line { border-bottom: 1px solid #111; width: 80%; margin: 60px auto 8px auto; }
-  .signature .name { font-weight: bold; text-align: center; font-size: 11px; }
-  .signature .meta { text-align: center; font-size: 10px; }
-  .signature .role { text-align: center; font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 4px; }
-${renderBrandingCss(branding ?? { companyName: "", logoDataUri: null, palette, hasBranding: false })}`;
+  ${scope} { font-family: Arial, sans-serif; font-size: 11px; line-height: 1.55; color: #111; padding: 20mm 15mm; }
+  ${scope} h1.header { text-align: center; font-size: 13px; font-weight: bold; letter-spacing: 0.06em; text-transform: uppercase; margin: 0; }
+  ${scope} .header-wrap { text-align: center; border-bottom: 2px solid ${headerBorder}; padding-bottom: 10px; margin-bottom: 16px; }
+  ${scope} .header-meta { margin-top: 6px; font-size: 10px; color: #666; }
+  ${scope} p.intro { font-size: 11px; line-height: 1.55; margin-bottom: 14px; text-align: justify; }
+  ${scope} .section-title { background: ${sectionBg}; color: ${sectionFg}; padding: 6px 12px; text-align: center; font-weight: bold; font-size: 11px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  ${scope} table.proc { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 16px; }
+  ${scope} table.proc th { text-align: left; padding: 6px 0; border-bottom: 2px solid ${tableHeadBorder}; font-weight: bold; }
+  ${scope} table.proc th.qty { text-align: right; width: 100px; }
+  ${scope} table.proc td { padding: 6px 0; border-bottom: 1px solid #e5e7eb; }
+  ${scope} table.proc td.qty { text-align: right; }
+  ${scope} .values { font-size: 11px; margin-bottom: 16px; }
+  ${scope} .values .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  ${scope} .values .row.total { font-weight: bold; padding-top: 8px; border-top: 1px solid #d1d5db; margin-top: 8px; }
+  ${scope} .pay-list { font-size: 11px; margin-left: 16px; }
+  ${scope} .pay-list .opt { margin-bottom: 4px; }
+  ${scope} .pay-list .opt .mark { font-family: monospace; margin-right: 8px; }
+  ${scope} .pay-list .credit-detail { margin-left: 32px; margin-top: 4px; }
+  ${scope} .pay-custom { font-size: 11px; padding: 12px; background: #fafafa; border: 1px solid #d1d5db; border-radius: 4px; margin-left: 16px; }
+  ${scope} .terms { font-size: 10.5px; margin-bottom: 16px; }
+  ${scope} .terms p { line-height: 1.55; margin: 0 0 6px 0; text-align: justify; }
+  ${scope} .terms .header { font-weight: bold; text-transform: uppercase; margin-bottom: 10px; font-size: 11px; }
+  ${scope} hr.dashed { border: 0; border-top: 1px dashed #d1d5db; margin: 14px 0; }
+  ${scope} .additional-term { margin-top: 24px; page-break-before: always; }
+  ${scope} .additional-term h2 { text-align: center; font-size: 12px; font-weight: bold; letter-spacing: 0.04em; border-top: 2px solid #9ca3af; padding-top: 18px; margin-bottom: 14px; }
+  ${scope} .additional-term .sub { font-weight: bold; font-size: 11px; margin: 0 0 6px 0; }
+  ${scope} .additional-term p { font-size: 10.5px; line-height: 1.55; text-align: justify; margin: 0 0 4px 0; }
+  ${scope} .anexo { margin-top: 24px; page-break-before: always; }
+  ${scope} .anexo h2 { text-align: center; font-size: 12px; font-weight: bold; border-top: 2px solid #9ca3af; padding-top: 18px; margin-bottom: 14px; }
+  ${scope} .anexo .body { font-size: 10.5px; line-height: 1.55; text-align: justify; white-space: pre-line; }
+  ${scope} .signature { margin-top: 24px; font-size: 11px; }
+  ${scope} .signature .line { border-bottom: 1px solid #111; width: 80%; margin: 60px auto 8px auto; }
+  ${scope} .signature .name { font-weight: bold; text-align: center; font-size: 11px; }
+  ${scope} .signature .meta { text-align: center; font-size: 10px; }
+  ${scope} .signature .role { text-align: center; font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 4px; }
+`;
 }
 
 const TERMOS = [
@@ -285,14 +301,7 @@ export function renderDefaultSystemContract(ctx: DefaultContractContext): string
   const additionalTerms = `${temIM ? termoIM(ctx.profissional_nome) : ""}${temEV ? termoEV(ctx.profissional_nome) : ""}${temImplante ? termoImplante(ctx.profissional_nome) : ""}`;
   const showAnexo = temIM || temEV || temImplante;
 
-  return `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<title>Contrato</title>
-<style>${buildCss(ctx.branding)}</style>
-</head>
-<body>
+  return `
   ${ctx.branding ? renderBrandingHeader(ctx.branding) : ""}
   <div class="header-wrap">
     <h1 class="header">CONTRATO DE PRESTAÇÃO DE SERVIÇOS EM SAÚDE</h1>
@@ -341,7 +350,5 @@ export function renderDefaultSystemContract(ctx: DefaultContractContext): string
     <p class="name">${pacienteNome}</p>
     <p class="meta">CPF: ${pacienteCpf}</p>
     <p class="role">Contratante</p>
-  </div>
-</body>
-</html>`;
+  </div>`;
 }

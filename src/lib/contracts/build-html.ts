@@ -6,7 +6,10 @@ import {
   formatDateExtenso,
   replaceContractVariables,
 } from "@/lib/contracts/render";
-import { renderDefaultSystemContract } from "@/lib/contracts/templates/default-system-contract";
+import {
+  buildDefaultContractCss,
+  renderDefaultSystemContract,
+} from "@/lib/contracts/templates/default-system-contract";
 import {
   getDocumentBranding,
   renderBrandingCss,
@@ -29,19 +32,65 @@ export type BuildContractResult =
 
 type LineProc = { procedure_name?: string; quantity?: number };
 
+/** Um documento do pacote, antes de virar página do PDF. */
+type Fragmento = {
+  /** Classe do wrapper — também escopa o CSS deste tipo de documento. */
+  classe: string;
+  css: string;
+  body: string;
+};
+
 /**
- * Monta o HTML do contrato de uma proposta.
+ * Junta os fragmentos num `<html>` só.
  *
- * Extraído de `/api/contratos/envio-manual` para ser compartilhado com
+ * Por que um documento só: `createDocument` da Authentique recebe
+ * `$file: Upload!` — SINGULAR. Uma assinatura para vários papéis só existe
+ * concatenando os papéis num PDF. Isso é sorte, não limitação: tudo abaixo
+ * do PDF (document_id, webhook, acervo, anexo no prontuário) segue 1:1.
+ *
+ * ⚠️ NÃO resetar a margem do `body`. Ela é a margem default do navegador
+ * (8px) e sempre esteve valendo — zerá-la deslocaria ~2mm todo contrato já
+ * emitido, e a garantia aqui é que um pacote de um documento só saia
+ * idêntico ao de antes desta feature.
+ */
+function montarShell(fragmentos: Fragmento[], brandingCss: string): string {
+  // Dedup por classe: três contratos custom compartilham uma regra só.
+  const cssPorClasse = new Map<string, string>();
+  for (const f of fragmentos) cssPorClasse.set(f.classe, f.css);
+
+  const css = [
+    // Quebra ANTES de cada documento exceto o primeiro. Com um documento
+    // só, não produz efeito nenhum.
+    ".doc + .doc { page-break-before: always; }",
+    brandingCss,
+    ...cssPorClasse.values(),
+  ].join("\n");
+
+  const corpo = fragmentos
+    .map((f) => `<div class="doc ${f.classe}">${f.body}</div>`)
+    .join("");
+
+  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Contrato</title><style>${css}</style></head><body>${corpo}</body></html>`;
+}
+
+/**
+ * Monta o HTML dos documentos de uma proposta, num PDF só.
+ *
+ * Compartilhado por `/api/contratos/envio-manual` e
  * `/api/contratos/[propostaId]/pdf` — os dois precisam produzir
  * exatamente o mesmo documento, senão o que o usuário imprime diverge do
  * que o paciente assinou.
  *
- * Dois caminhos de render, herdados do n8n:
- *   - com `contract_id`: HTML do usuário, com `{{variáveis}}` substituídas
- *   - sem `contract_id`: TCLE padrão do sistema, code-driven
+ * A seleção vem de `proposta_contracts` (modelos, em ordem) e de
+ * `propostas.incluir_tcle_padrao` (o TCLE code-driven, que não é linha em
+ * `contracts`). O TCLE, quando marcado, entra por ÚLTIMO — ele fecha o
+ * pacote, e é assim que a tela de seleção o apresenta.
+ *
+ * `propostas.contract_id` NÃO é mais lida: a migration de
+ * `proposta_contracts` fez o backfill dela. A coluna segue na tabela,
+ * marcada como legada.
  */
-export async function buildContractHtml(args: {
+export async function buildContractsHtml(args: {
   propostaId: string;
   companyId: string;
 }): Promise<BuildContractResult> {
@@ -59,16 +108,53 @@ export async function buildContractHtml(args: {
     return { ok: false, error: "Acesso negado a esta proposta", status: 403 };
   }
 
-  // Contrato custom (se a proposta apontar para um)
-  let contractContent: string | null = null;
-  if (proposta.contract_id) {
-    const contractResult = await admin
+  // Modelos escolhidos neste orçamento, na ordem definida.
+  const vinculosResult = await admin
+    .from("proposta_contracts")
+    .select("contract_id, ordem")
+    .eq("proposta_id", args.propostaId)
+    .order("ordem", { ascending: true });
+  const vinculos = (vinculosResult.data ?? []) as Array<{
+    contract_id: string;
+    ordem: number;
+  }>;
+
+  const contratos: Array<{ id: string; name: string; content: string }> = [];
+  if (vinculos.length > 0) {
+    const contratosResult = await admin
       .from("contracts")
-      .select("content")
-      .eq("id", proposta.contract_id as string)
-      .maybeSingle();
-    const contract = contractResult.data as { content?: string } | null;
-    contractContent = contract?.content ?? null;
+      .select("id, name, content")
+      .in(
+        "id",
+        vinculos.map((v) => v.contract_id),
+      );
+    const porId = new Map(
+      ((contratosResult.data ?? []) as Array<{
+        id: string;
+        name: string;
+        content: string | null;
+      }>).map((c) => [c.id, c]),
+    );
+    // Percorre `vinculos` (ordenado), não o resultado do `.in()`, que o
+    // Postgres devolve em ordem arbitrária.
+    for (const v of vinculos) {
+      const c = porId.get(v.contract_id);
+      if (c?.content) contratos.push({ id: c.id, name: c.name, content: c.content });
+    }
+  }
+
+  const incluirTcle = Boolean(proposta.incluir_tcle_padrao);
+
+  // Guarda: nada selecionado. Consequência direta de o TCLE ter deixado de
+  // ser pré-marcado — melhor um erro claro no envio do que um PDF em branco
+  // chegando ao paciente para assinar.
+  if (contratos.length === 0 && !incluirTcle) {
+    return {
+      ok: false,
+      error:
+        "Nenhum documento selecionado para este orçamento. Escolha ao menos um modelo ou marque o contrato padrão do sistema.",
+      status: 422,
+    };
   }
 
   // Procedimentos: itens do protocolo base (se houver) + adicionais.
@@ -168,9 +254,25 @@ export async function buildContractHtml(args: {
 
   const branding = await getDocumentBranding(args.companyId);
 
-  const html = contractContent
-    ? `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Contrato</title><style>${renderBrandingCss(branding)}</style></head><body style="font-family:Arial,sans-serif;font-size:12px;line-height:1.55;color:#111;padding:20mm;">${renderBrandingHeader(branding)}${replaceContractVariables(contractContent, variables)}</body></html>`
-    : renderDefaultSystemContract({
+  const fragmentos: Fragmento[] = [];
+
+  // Modelos do usuário. O estilo do wrapper é o que antes estava no
+  // `<body style="...">` — mesmo offset, agora numa classe, porque o body
+  // é compartilhado por todos os documentos do pacote.
+  for (const contrato of contratos) {
+    fragmentos.push({
+      classe: "doc-custom",
+      css: ".doc-custom { font-family: Arial, sans-serif; font-size: 12px; line-height: 1.55; color: #111; padding: 20mm; }",
+      body: `${renderBrandingHeader(branding)}${replaceContractVariables(contrato.content, variables)}`,
+    });
+  }
+
+  // TCLE padrão do sistema, por último.
+  if (incluirTcle) {
+    fragmentos.push({
+      classe: "doc-tcle",
+      css: buildDefaultContractCss(".doc-tcle", branding),
+      body: renderDefaultSystemContract({
         branding,
         paciente_nome: (proposta.paciente_nome as string) ?? "",
         paciente_cpf: (proposta.paciente_cpf as string) ?? "",
@@ -185,7 +287,11 @@ export async function buildContractHtml(args: {
           (proposta.custom_payment_method as string | null) ?? null,
         installments,
         installment_value_cents: installmentValueCents,
-      });
+      }),
+    });
+  }
+
+  const html = montarShell(fragmentos, renderBrandingCss(branding));
 
   const docName = `Contrato - ${variables.paciente_nome} - ${formatDateExtenso()} - Proposta - ${
     proposta.id_proposta_api ?? args.propostaId

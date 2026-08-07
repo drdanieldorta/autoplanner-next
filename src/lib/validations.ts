@@ -22,6 +22,20 @@ export const protocolItemSchema = z.object({
   cuidados: z.string().max(500, 'Máximo de 500 caracteres').nullable().optional(),
 });
 
+// Documentos que o paciente assina. Vão todos num PDF só, porque o
+// `createDocument` da Authentique recebe `$file: Upload!` — singular.
+//
+// O TCLE padrão é booleano e não id: ele não é linha em `contracts`, é
+// código (`renderDefaultSystemContract`).
+//
+// Nenhum dos dois é obrigatório aqui. Um plano sem documento é erro de
+// ENVIO, checado em `buildContractsHtml` — bloquear no schema impediria
+// salvar um protocolo pela metade, que é um uso legítimo.
+export const documentosPlanoSchema = {
+  contract_ids: z.array(z.string().uuid()).default([]),
+  incluir_tcle_padrao: z.boolean().default(false),
+};
+
 export const createProtocolSchema = z.object({
   name: z.string()
     .min(3, 'Nome deve ter pelo menos 3 caracteres')
@@ -30,7 +44,8 @@ export const createProtocolSchema = z.object({
   cuidados_gerais: z.string().max(2000, 'Máximo de 2000 caracteres').nullable().optional(),
   sinais_alerta: z.string().max(2000, 'Máximo de 2000 caracteres').nullable().optional(),
   items: z.array(protocolItemSchema)
-    .min(1, 'Adicione pelo menos um procedimento')
+    .min(1, 'Adicione pelo menos um procedimento'),
+  ...documentosPlanoSchema,
 });
 
 export const updateProtocolSchema = createProtocolSchema.extend({
@@ -105,8 +120,8 @@ export const createOrcamentoSchema = z.object({
   protocol_name: z.string().nullable().optional(),
   additional_procedures: z.array(orcamentoProcedureSchema).default([]),
 
-  // contrato modelo (opcional)
-  contract_id: z.string().uuid().nullable().optional(),
+  // documentos que o paciente assina (um PDF, uma assinatura)
+  ...documentosPlanoSchema,
 
   // pagamento
   discount_percent: z.number().int().min(0).max(100).default(0),

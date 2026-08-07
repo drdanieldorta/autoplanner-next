@@ -41,6 +41,10 @@ export default async function NovoOrcamentoPage() {
     id: p.id,
     name: p.name,
     total_value_cents: p.total_value_cents,
+    // Documentos que este protocolo propõe — o orçamento nasce com eles
+    // marcados e pode ajustar sem alterar o protocolo.
+    contractIds: p.contractIds,
+    incluirTcle: p.incluir_tcle_padrao,
     items: p.items.map((item) => ({
       id: item.id,
       procedure_id: item.procedure_id,

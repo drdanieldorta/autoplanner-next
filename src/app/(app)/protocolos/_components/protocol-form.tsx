@@ -45,6 +45,10 @@ import { cn } from "@/lib/utils";
 import { createProtocolSchema } from "@/lib/validations";
 import type { ProtocolProcedureOption } from "@/lib/services/protocol-form-data";
 import { createProtocol, updateProtocol } from "../actions";
+import {
+  DocumentosSelector,
+  type ContractOption,
+} from "@/app/(app)/_components/documentos-selector";
 import { ProtocolClinicalGrid } from "./protocol-clinical-fields";
 
 type FormValues = z.infer<typeof createProtocolSchema>;
@@ -59,6 +63,8 @@ type Props = {
   procedures: ProtocolProcedureOption[];
   /** Preenchido quando a empresa tem token mas a chamada falhou. */
   feegowError: string | null;
+  /** Modelos de contrato da empresa, para o padrão de documentos do plano. */
+  contracts: ContractOption[];
 };
 
 export function ProtocolForm({
@@ -68,6 +74,7 @@ export function ProtocolForm({
   hasFeegow,
   procedures,
   feegowError,
+  contracts,
 }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -96,6 +103,8 @@ export function ProtocolForm({
   // mas é a forma idiomática de re-renderizar quando items mudam.
   // eslint-disable-next-line react-hooks/incompatible-library
   const items = form.watch("items");
+  const contractIds = form.watch("contract_ids");
+  const incluirTcle = form.watch("incluir_tcle_padrao");
   const totalCents = items.reduce((sum, item) => {
     const subtotal = (item.quantity || 0) * (item.value_cents || 0);
     const discount = subtotal * ((item.discount_percent || 0) / 100);
@@ -437,6 +446,30 @@ export function ProtocolForm({
         </CardHeader>
         <CardContent>
           <ProtocolClinicalGrid form={form} itens={items} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Documentos do plano</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            O que o paciente assina ao aceitar este plano. Cada orçamento
+            nasce com esta seleção e pode ajustá-la.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <DocumentosSelector
+            idPrefix="proto"
+            contracts={contracts}
+            selecionados={contractIds}
+            incluirTcle={incluirTcle}
+            onChangeSelecionados={(ids) =>
+              form.setValue("contract_ids", ids, { shouldDirty: true })
+            }
+            onChangeIncluirTcle={(v) =>
+              form.setValue("incluir_tcle_padrao", v, { shouldDirty: true })
+            }
+          />
         </CardContent>
       </Card>
 
