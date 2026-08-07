@@ -226,10 +226,27 @@ resolvida na UI e gravada como offsets explícitos, para o delta ser auditável.
   contrato". A folha degrada — imprime "— CONFERIR" — em vez de falhar.
 - **Falha da folha nunca derruba o contrato** — `toast.warning`, nunca rollback.
 
-**Ao adicionar coluna em `protocol_items`, ela precisa entrar em QUATRO lugares** ou é
-apagada silenciosamente no primeiro save (delete-then-insert):
-`protocolItemSchema` → `getProtocolById` (select explícito) → `protocolos/[id]/editar`
-(initialValues) → o `map` de items em `updateProtocol`.
+**Ao adicionar coluna em `protocol_items`, ela precisa entrar em CINCO lugares** ou é
+apagada silenciosamente no primeiro save (delete-then-insert), ou simplesmente nunca
+chega na folha:
+1. `protocolItemSchema` (`lib/validations.ts`)
+2. `protocolos/[id]/editar` — `initialValues` (map destrutivo)
+3. os `map` de items em `createProtocol` **e** `updateProtocol`
+4. `getProtocolById` — `protocol_items` usa `.select("*")`, então passa sozinho; o select
+   explícito ali é o de `protocols`
+5. **`lib/services/prescricoes.ts`** — este select de `protocol_items` É explícito, e é o
+   que alimenta a folha. Coluna esquecida aqui salva no banco e some do documento.
+
+**Dose (2026-08-07).** É opcional e o documento reage a ela: sem nenhum item com dose, a
+folha sai byte a byte idêntica à de antes da feature — inclusive o rodapé afirmando que
+"não informa dose" e a orientação sem menção a dose. Com dose, a coluna DOSE aparece e as
+duas frases trocam. Diluente e velocidade seguem fora de escopo nos dois casos. Se dose
+virar rotina, revisitar a assinatura do prescritor (hoje ele é referência, não signatário).
+
+**`inicio_dias`** é offset a partir do D0, não data — o protocolo é modelo reutilizável.
+O offset padrão de uma sessão é `inicio_dias + idx * interval_days`. Ajustes por paciente
+(`prescricao_ajustes.sessoes`) guardam offsets ABSOLUTOS, então mudar `inicio_dias` num
+protocolo não move sessões já remanejadas em folhas existentes.
 
 **Feegow:** não existe escrita estruturada de prescrição. `/medical-record/*` é todo
 GET-only e `/medical-reports/create` exige `agendamento_id`. O único caminho é anexar PDF

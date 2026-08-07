@@ -77,6 +77,8 @@ export async function createProtocol(
   const items = parsed.data.items.map((item) => ({
     ...item,
     via: item.via ?? null,
+    dose: nullIfBlank(item.dose),
+    inicio_dias: item.inicio_dias ?? 0,
     cuidados: nullIfBlank(item.cuidados),
     protocol_id: created.id,
   }));
@@ -142,6 +144,8 @@ export async function updateProtocol(
   const items = parsed.data.items.map((item) => ({
     ...item,
     via: item.via ?? null,
+    dose: nullIfBlank(item.dose),
+    inicio_dias: item.inicio_dias ?? 0,
     cuidados: nullIfBlank(item.cuidados),
     protocol_id: parsed.data.id,
   }));

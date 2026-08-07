@@ -124,7 +124,7 @@ export async function loadPrescricaoFonte(args: {
 
     const itemsResult = await admin
       .from("protocol_items")
-      .select("id, procedure_name, quantity, interval_days, via, cuidados")
+      .select("id, procedure_name, quantity, interval_days, inicio_dias, dose, via, cuidados")
       .eq("protocol_id", protocoloId)
       .order("created_at", { ascending: true });
     for (const raw of (itemsResult.data ?? []) as Array<{
@@ -132,6 +132,8 @@ export async function loadPrescricaoFonte(args: {
       procedure_name: string;
       quantity: number;
       interval_days: number;
+      inicio_dias: number | null;
+      dose: string | null;
       via: string | null;
       cuidados: string | null;
     }>) {
@@ -140,6 +142,8 @@ export async function loadPrescricaoFonte(args: {
         procedure_name: raw.procedure_name,
         quantity: raw.quantity,
         interval_days: raw.interval_days,
+        inicio_dias: raw.inicio_dias ?? 0,
+        dose: raw.dose,
         via: raw.via,
         cuidados: raw.cuidados,
       });
@@ -158,6 +162,8 @@ export async function loadPrescricaoFonte(args: {
       procedure_name: String(extra.procedure_name ?? "Procedimento"),
       quantity: Number(extra.quantity ?? 1),
       interval_days: Number(extra.interval_days ?? 0),
+      inicio_dias: 0,
+      dose: null,
       via: null,
       cuidados: null,
     });

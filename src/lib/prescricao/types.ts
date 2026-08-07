@@ -4,9 +4,10 @@
  *
  * Vocabulário deliberado: este módulo NÃO usa a palavra "prescrição" para
  * nomear o artefato. Sob a COFEN 358/2009, "prescrição de enfermagem" é o
- * ato privativo do enfermeiro; e sem dose/diluente/velocidade o documento
- * não é prescrição de ninguém. O que projetamos é um PLANO DE EXECUÇÃO:
- * o que aplicar, por qual via, com quais cuidados, em que datas.
+ * ato privativo do enfermeiro. O que projetamos é um PLANO DE EXECUÇÃO:
+ * o que aplicar, por qual via, em que dose quando informada, com quais
+ * cuidados, em que datas. Diluente e velocidade de infusão seguem fora de
+ * escopo, e o rodapé do documento declara isso.
  *
  * As COLUNAS do banco mantêm o prefixo `prescricao_` por já estarem
  * criadas e por ser o termo que a clínica usa no dia a dia.
@@ -21,6 +22,9 @@ export type PlanoItemFonte = {
   procedure_name: string;
   quantity: number;
   interval_days: number;
+  /** Dias entre o D0 do plano e a PRIMEIRA sessão deste item. */
+  inicio_dias: number;
+  dose: string | null;
   via: Via | null;
   /** true quando `via` não veio do banco e sim do heurístico de nome. */
   via_inferida: boolean;
@@ -30,6 +34,7 @@ export type PlanoItemFonte = {
 /** Ajuste esparso de uma folha — só o que difere do protocolo. */
 export type AjusteItem = {
   via?: Via | null;
+  dose?: string | null;
   cuidados?: string | null;
   /** índice ORIGINAL da sessão (1-based) → offset em dias a partir do D0. */
   sessoes?: Record<string, number>;
@@ -80,6 +85,7 @@ export type PlanoDia = {
     procedure_name: string;
     via: Via | null;
     via_inferida: boolean;
+    dose: string | null;
     cuidados: string | null;
     /** "2/6" */
     sessao: string;

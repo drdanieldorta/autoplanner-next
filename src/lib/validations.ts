@@ -17,6 +17,8 @@ export const protocolItemSchema = z.object({
   value_cents: z.number().int().min(0, 'Valor não pode ser negativo'),
   discount_percent: z.number().int().min(0).max(100, 'Desconto deve estar entre 0 e 100%'),
   via: z.enum(VIAS).nullable().optional(),
+  dose: z.string().max(120, 'Máximo de 120 caracteres').nullable().optional(),
+  inicio_dias: z.number().int().min(0, 'Início não pode ser negativo').max(3650).optional(),
   cuidados: z.string().max(500, 'Máximo de 500 caracteres').nullable().optional(),
 });
 

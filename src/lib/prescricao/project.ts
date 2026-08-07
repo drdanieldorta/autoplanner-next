@@ -28,6 +28,8 @@ export type ItemCru = {
   procedure_name: string;
   quantity: number | null | undefined;
   interval_days: number | null | undefined;
+  inicio_dias?: number | null;
+  dose?: string | null;
   via?: string | null;
   cuidados?: string | null;
 };
@@ -81,6 +83,8 @@ export function normalizarItem(raw: ItemCru): PlanoItemFonte {
     procedure_name: (raw.procedure_name ?? "").trim() || "Procedimento",
     quantity: Math.max(1, Math.trunc(Number(raw.quantity ?? 1)) || 1),
     interval_days: Math.max(0, Math.trunc(Number(raw.interval_days ?? 0)) || 0),
+    inicio_dias: Math.max(0, Math.trunc(Number(raw.inicio_dias ?? 0)) || 0),
+    dose: (raw.dose ?? "").trim() || null,
     via,
     via_inferida: !temViaBanco && via !== null,
     cuidados: cuidados || null,
@@ -112,7 +116,7 @@ function expandirSessoes(
   const brutas: PlanoSessao[] =
     item.interval_days === 0
       ? (() => {
-          const { offset, ajustada } = offsetDe(1, 0);
+          const { offset, ajustada } = offsetDe(1, item.inicio_dias);
           return [
             {
               n: 1,
@@ -128,7 +132,10 @@ function expandirSessoes(
         })()
       : Array.from({ length: item.quantity }, (_, idx) => {
           const n = idx + 1;
-          const { offset, ajustada } = offsetDe(n, idx * item.interval_days);
+          const { offset, ajustada } = offsetDe(
+            n,
+            item.inicio_dias + idx * item.interval_days,
+          );
           return {
             n,
             ordem: n,
@@ -188,12 +195,15 @@ export function projetarPlano(input: ProjetarInput): PlanoExecucao {
     const viaAjustada = aj && "via" in aj && isVia(aj.via) ? aj.via : null;
     const cuidadosAjustados =
       aj && typeof aj.cuidados === "string" ? aj.cuidados.trim() : null;
+    const doseAjustada =
+      aj && typeof aj.dose === "string" ? aj.dose.trim() : null;
 
     const comAjuste: PlanoItemFonte = {
       ...fonte,
       via: viaAjustada ?? fonte.via,
       via_inferida: viaAjustada ? false : fonte.via_inferida,
       cuidados: cuidadosAjustados || fonte.cuidados,
+      dose: doseAjustada || fonte.dose,
     };
 
     const sessoes = expandirSessoes(comAjuste, inicioDate, aj?.sessoes);
@@ -204,6 +214,7 @@ export function projetarPlano(input: ProjetarInput): PlanoExecucao {
       ajustado:
         Boolean(viaAjustada) ||
         Boolean(cuidadosAjustados) ||
+        Boolean(doseAjustada) ||
         sessoes.some((x) => x.ajustada),
     };
   });
@@ -227,6 +238,7 @@ export function projetarPlano(input: ProjetarInput): PlanoExecucao {
         procedure_name: item.procedure_name,
         via: item.via,
         via_inferida: item.via_inferida,
+        dose: item.dose,
         cuidados: item.cuidados,
         sessao: `${sessao.ordem}/${sessao.total}`,
         repeticoes: sessao.repeticoes,

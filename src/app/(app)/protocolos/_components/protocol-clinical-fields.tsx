@@ -2,7 +2,10 @@
 
 import type { UseFormReturn } from "react-hook-form";
 import type { z } from "zod";
+import { Syringe } from "lucide-react";
 
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -11,8 +14,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
 import { VIA_LABEL, VIAS } from "@/lib/prescricao/enums";
 import type { createProtocolSchema } from "@/lib/validations";
 
@@ -21,70 +22,150 @@ type FormValues = z.infer<typeof createProtocolSchema>;
 const SEM_VIA = "__sem_via__";
 
 /**
- * Camada clínica de um item do protocolo: via de administração + cuidados.
+ * Grade da camada clínica do protocolo — via, dose, início e observações
+ * de cada procedimento, o que a enfermagem lê na folha de execução.
  *
- * Fica atrás de um botão recolhível no form — quem monta orçamento
- * comercial nunca precisa ver. Ambos os campos são opcionais: todo
- * protocolo já existente tem esses campos nulos, e exigi-los quebraria a
- * edição de qualquer protocolo legado.
+ * Substituiu um bloco recolhível por item. O motivo é a tarefa, não a
+ * estética: preencher a camada clínica de um protocolo é uma passada de
+ * cima a baixo, não seis expansões seguidas de seis colapsos. E ver os
+ * itens lado a lado é o que torna óbvio qual está sem via — um por vez,
+ * escondido atrás de um botão, não torna.
  *
- * O que é preenchido aqui alimenta o cronograma de aplicações que a
- * enfermagem recebe. Deliberadamente NÃO há dose, diluente nem velocidade
- * de infusão: a folha não é prescrição e não deve afirmar dose.
+ * Nada aqui é obrigatório: todo protocolo legado tem estes campos nulos e
+ * exigi-los quebraria a edição deles, além de travar o envio do contrato,
+ * já que a folha é gerada no mesmo fluxo.
  */
-export function ProtocolClinicalFields({
+export function ProtocolClinicalGrid({
   form,
-  index,
+  itens,
 }: {
   form: UseFormReturn<FormValues>;
-  index: number;
+  itens: FormValues["items"];
 }) {
-  const via = form.watch(`items.${index}.via`);
+  if (itens.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground text-center py-6">
+        Adicione procedimentos acima para preencher a camada clínica.
+      </p>
+    );
+  }
 
   return (
-    <div className="md:col-span-12">
-      <Separator className="mb-3" />
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-        <div className="md:col-span-3">
-          <Label className="text-xs">Via de administração</Label>
-          <Select
-            value={via ?? SEM_VIA}
-            onValueChange={(v) =>
-              form.setValue(
-                `items.${index}.via`,
-                v === SEM_VIA ? null : (v as (typeof VIAS)[number]),
-                { shouldDirty: true },
-              )
-            }
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Não definida" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={SEM_VIA}>Não definida</SelectItem>
-              {VIAS.map((v) => (
-                <SelectItem key={v} value={v}>
-                  {VIA_LABEL[v]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {!via && (
-            <p className="text-[11px] text-muted-foreground mt-1">
-              Sem via definida, o cronograma deduz pelo nome e marca para
-              conferência.
-            </p>
-          )}
-        </div>
-        <div className="md:col-span-9">
-          <Label className="text-xs">Cuidados de enfermagem</Label>
-          <Textarea
-            rows={2}
-            placeholder="Ex: proteger da luz durante a infusão; aplicar após o item anterior"
-            {...form.register(`items.${index}.cuidados`)}
-          />
-        </div>
+    <div className="space-y-3">
+      {/* Cabeçalho só no desktop — no mobile cada item vira um cartão. */}
+      <div className="hidden md:grid md:grid-cols-12 gap-3 px-1 pb-1 border-b">
+        <span className="md:col-span-3 text-xs font-medium text-muted-foreground">
+          Procedimento
+        </span>
+        <span className="md:col-span-2 text-xs font-medium text-muted-foreground">
+          Via
+        </span>
+        <span className="md:col-span-2 text-xs font-medium text-muted-foreground">
+          Dose
+        </span>
+        <span className="md:col-span-1 text-xs font-medium text-muted-foreground">
+          Início
+        </span>
+        <span className="md:col-span-4 text-xs font-medium text-muted-foreground">
+          Observações para a enfermagem
+        </span>
       </div>
+
+      {itens.map((item, index) => {
+        const nome = item.procedure_name?.trim();
+        return (
+          <div
+            key={index}
+            className="grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-3 md:items-center border rounded-lg p-3 md:border-0 md:rounded-none md:p-1"
+          >
+            <div className="md:col-span-3 min-w-0">
+              <span className="md:hidden text-xs text-muted-foreground block mb-1">
+                Procedimento
+              </span>
+              <p className="text-sm font-medium truncate" title={nome || undefined}>
+                {nome || (
+                  <span className="text-muted-foreground italic">
+                    Procedimento {index + 1}
+                  </span>
+                )}
+              </p>
+              {!item.via && (
+                <Badge variant="outline" className="mt-1 text-[10px] font-normal">
+                  sem via
+                </Badge>
+              )}
+            </div>
+
+            <div className="md:col-span-2">
+              <Label className="md:hidden text-xs">Via de administração</Label>
+              <Select
+                value={item.via ?? SEM_VIA}
+                onValueChange={(v) =>
+                  form.setValue(
+                    `items.${index}.via`,
+                    v === SEM_VIA ? null : (v as (typeof VIAS)[number]),
+                    { shouldDirty: true },
+                  )
+                }
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="—" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={SEM_VIA}>Não definida</SelectItem>
+                  {VIAS.map((v) => (
+                    <SelectItem key={v} value={v}>
+                      {VIA_LABEL[v]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="md:col-span-2">
+              <Label className="md:hidden text-xs">Dose</Label>
+              <Input
+                className="h-9"
+                placeholder="2,5 mg"
+                {...form.register(`items.${index}.dose`)}
+              />
+            </div>
+
+            <div className="md:col-span-1">
+              <Label className="md:hidden text-xs">Início (dias após o D0)</Label>
+              <Input
+                type="number"
+                min={0}
+                className="h-9"
+                {...form.register(`items.${index}.inicio_dias`, {
+                  valueAsNumber: true,
+                })}
+              />
+            </div>
+
+            <div className="md:col-span-4">
+              <Label className="md:hidden text-xs">
+                Observações para a enfermagem
+              </Label>
+              <Input
+                className="h-9"
+                placeholder="Ex: proteger da luz; aplicar após o item anterior"
+                {...form.register(`items.${index}.cuidados`)}
+              />
+            </div>
+          </div>
+        );
+      })}
+
+      <p className="text-xs text-muted-foreground flex items-start gap-1.5 pt-1">
+        <Syringe className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>
+          Tudo opcional. <strong>Início</strong> é em dias após o começo do
+          tratamento — 0 aplica junto com a primeira sessão, 14 começa duas
+          semanas depois. Item sem via faz o cronograma deduzir pelo nome e
+          marcar para conferência.
+        </span>
+      </p>
     </div>
   );
 }

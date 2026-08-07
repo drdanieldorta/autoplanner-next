@@ -1208,9 +1208,11 @@ export type Database = {
         Row: {
           created_at: string | null
           cuidados: string | null
+          dose: string | null
           discount_percent: number
           id: string
           interval_days: number
+          inicio_dias: number
           procedure_id: string
           procedure_name: string
           protocol_id: string
@@ -1221,9 +1223,11 @@ export type Database = {
         Insert: {
           created_at?: string | null
           cuidados?: string | null
+          dose?: string | null
           discount_percent?: number
           id?: string
           interval_days?: number
+          inicio_dias?: number
           procedure_id: string
           procedure_name: string
           protocol_id: string
@@ -1234,9 +1238,11 @@ export type Database = {
         Update: {
           created_at?: string | null
           cuidados?: string | null
+          dose?: string | null
           discount_percent?: number
           id?: string
           interval_days?: number
+          inicio_dias?: number
           procedure_id?: string
           procedure_name?: string
           protocol_id?: string

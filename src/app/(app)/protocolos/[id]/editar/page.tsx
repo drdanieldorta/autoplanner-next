@@ -61,6 +61,8 @@ export default async function Page({
             // união vira null e o form pede para escolher, em vez de vazar
             // string arbitrária para dentro do schema.
             via: isVia(item.via) ? item.via : null,
+            dose: item.dose ?? "",
+            inicio_dias: item.inicio_dias ?? 0,
             cuidados: item.cuidados ?? "",
           })),
         }}
