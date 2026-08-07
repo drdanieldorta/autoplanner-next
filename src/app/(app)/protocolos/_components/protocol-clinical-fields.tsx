@@ -63,10 +63,10 @@ export function ProtocolClinicalGrid({
         <span className="md:col-span-2 text-xs font-medium text-muted-foreground">
           Dose
         </span>
-        <span className="md:col-span-1 text-xs font-medium text-muted-foreground">
-          Início
+        <span className="md:col-span-2 text-xs font-medium text-muted-foreground">
+          Começa em
         </span>
-        <span className="md:col-span-4 text-xs font-medium text-muted-foreground">
+        <span className="md:col-span-3 text-xs font-medium text-muted-foreground">
           Observações para a enfermagem
         </span>
       </div>
@@ -131,19 +131,34 @@ export function ProtocolClinicalGrid({
               />
             </div>
 
-            <div className="md:col-span-1">
-              <Label className="md:hidden text-xs">Início (dias após o D0)</Label>
-              <Input
-                type="number"
-                min={0}
-                className="h-9"
-                {...form.register(`items.${index}.inicio_dias`, {
-                  valueAsNumber: true,
-                })}
-              />
+            <div className="md:col-span-2">
+              <Label className="md:hidden text-xs">
+                Começa quantos dias depois do início?
+              </Label>
+              {/* O "D+" fica DENTRO do controle: um número solto numa coluna
+                  estreita não se lê como "dia do tratamento" — foi assim que
+                  este campo passou despercebido na primeira versão. */}
+              <div className="flex items-center h-9 rounded-md border border-input bg-background focus-within:ring-1 focus-within:ring-ring">
+                <span className="pl-2.5 pr-1 text-sm font-mono text-muted-foreground select-none">
+                  D+
+                </span>
+                <Input
+                  type="number"
+                  min={0}
+                  className="h-full border-0 shadow-none focus-visible:ring-0 px-0 w-full"
+                  {...form.register(`items.${index}.inicio_dias`, {
+                    valueAsNumber: true,
+                  })}
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {!item.inicio_dias
+                  ? "junto com a 1ª sessão"
+                  : `${item.inicio_dias} dias depois`}
+              </p>
             </div>
 
-            <div className="md:col-span-4">
+            <div className="md:col-span-3">
               <Label className="md:hidden text-xs">
                 Observações para a enfermagem
               </Label>
@@ -160,10 +175,11 @@ export function ProtocolClinicalGrid({
       <p className="text-xs text-muted-foreground flex items-start gap-1.5 pt-1">
         <Syringe className="h-3.5 w-3.5 mt-0.5 shrink-0" />
         <span>
-          Tudo opcional. <strong>Início</strong> é em dias após o começo do
-          tratamento — 0 aplica junto com a primeira sessão, 14 começa duas
-          semanas depois. Item sem via faz o cronograma deduzir pelo nome e
-          marcar para conferência.
+          Tudo opcional. <strong>Começa em</strong> conta a partir da data de
+          início do tratamento, definida em cada orçamento: <strong>D+0</strong>{" "}
+          entra na primeira sessão, <strong>D+14</strong> só duas semanas
+          depois. Item sem via faz o cronograma deduzir pelo nome e marcar
+          para conferência.
         </span>
       </p>
     </div>
