@@ -1,6 +1,7 @@
 import { Calculator } from "lucide-react";
 
 import { requireUser } from "@/lib/auth";
+import { isVia } from "@/lib/prescricao/enums";
 import { listProtocolsWithItems } from "@/lib/services/protocols";
 import { listContracts } from "@/lib/services/contratos";
 import { loadOrcamentoFormData } from "@/lib/services/orcamento-form-data";
@@ -29,17 +30,29 @@ export default async function NovoOrcamentoPage() {
     listContracts({ companyId: user.companyId }),
   ]);
 
+  // ⚠️ Este map já foi um funil que descartava a camada clínica.
+  //
+  // `item.id` é o `ref` do delta em `propostas.prescricao_ajustes` — sem ele
+  // o formulário não tem como gravar ajuste nenhum. E via/dose/inicio_dias/
+  // cuidados são o que o protocolo PROPÕE: sem eles a grade clínica do
+  // orçamento nasceria vazia mesmo num protocolo todo preenchido.
+  // Qualquer coluna clínica nova em `protocol_items` precisa passar por aqui.
   const protocols = protocolsRaw.map((p) => ({
     id: p.id,
     name: p.name,
     total_value_cents: p.total_value_cents,
     items: p.items.map((item) => ({
+      id: item.id,
       procedure_id: item.procedure_id,
       procedure_name: item.procedure_name,
       quantity: item.quantity,
       interval_days: item.interval_days,
       value_cents: item.value_cents,
       discount_percent: item.discount_percent,
+      via: isVia(item.via) ? item.via : null,
+      dose: item.dose,
+      inicio_dias: item.inicio_dias ?? 0,
+      cuidados: item.cuidados,
     })),
   }));
 

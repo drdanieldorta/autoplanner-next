@@ -43,6 +43,10 @@ export const updateProtocolSchema = createProtocolSchema.extend({
 // cliente para feedback imediato. Os campos de paciente/profissional são
 // preenchidos automaticamente pela seleção (modo automático) ou
 // digitados (modo manual).
+// Procedimento avulso. Diferente do item de protocolo, ele NÃO tem modelo
+// para desviar — não existe linha em `protocol_items` correspondente — então
+// a camada clínica dele é dado próprio e viaja dentro do JSONB
+// `propostas.procedimentos_adicionais`, não no delta `prescricao_ajustes`.
 export const orcamentoProcedureSchema = z.object({
   procedure_id: z.string().min(1),
   procedure_name: z.string().min(1, 'Informe o nome do procedimento'),
@@ -50,7 +54,33 @@ export const orcamentoProcedureSchema = z.object({
   interval_days: z.number().int().min(0).default(0),
   value_cents: z.number().int().min(1, 'Informe o valor do procedimento'),
   discount_percent: z.number().int().min(0).max(100).default(0),
+  via: z.enum(VIAS).nullable().optional(),
+  dose: z.string().max(120, 'Máximo de 120 caracteres').nullable().optional(),
+  inicio_dias: z.number().int().min(0).max(3650).optional(),
+  cuidados: z.string().max(500, 'Máximo de 500 caracteres').nullable().optional(),
 });
+
+/**
+ * Ajuste clínico de UM item, em `propostas.prescricao_ajustes`.
+ *
+ * Fica aqui, e não junto de cada tela, porque tem DOIS escritores — a
+ * criação do orçamento e o editor de cronograma — e `salvarAjustes` faz
+ * REPLACE do objeto inteiro. Um campo aceito só por um dos dois seria
+ * apagado em silêncio pelo outro: foi exatamente o que aconteceu com `dose`,
+ * que existia no tipo e na projeção mas nunca no schema de escrita.
+ * Schema único = impossível divergirem.
+ */
+export const ajusteItemSchema = z.object({
+  via: z.enum(VIAS).nullable().optional(),
+  dose: z.string().max(120).nullable().optional(),
+  cuidados: z.string().max(500).nullable().optional(),
+  /** Desloca o item inteiro. Offset em dias a partir do D0. */
+  inicio_dias: z.number().int().min(0).max(3650).nullable().optional(),
+  /** índice ORIGINAL da sessão (1-based) → offset em dias a partir do D0. */
+  sessoes: z.record(z.string(), z.number().int().min(0).max(3650)).optional(),
+});
+
+export const prescricaoAjustesSchema = z.record(z.string(), ajusteItemSchema);
 
 export const createOrcamentoSchema = z.object({
   // identidade
@@ -96,6 +126,8 @@ export const createOrcamentoSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data inválida')
     .nullable()
     .optional(),
+  /** Camada clínica ajustada para ESTE paciente. Chave = `protocol_items.id`. */
+  prescricao_ajustes: prescricaoAjustesSchema.optional(),
 }).refine(
   (data) => Boolean(data.payment_method) || Boolean((data.custom_payment_method ?? '').trim()),
   {
@@ -131,6 +163,7 @@ export type CreateProtocol = z.infer<typeof createProtocolSchema>;
 export type UpdateProtocol = z.infer<typeof updateProtocolSchema>;
 export type CreateOrcamento = z.infer<typeof createOrcamentoSchema>;
 export type OrcamentoProcedure = z.infer<typeof orcamentoProcedureSchema>;
+export type AjusteItemInput = z.infer<typeof ajusteItemSchema>;
 export type UpdateProposalStatus = z.infer<typeof updateProposalStatusSchema>;
 export type UpdateCredentials = z.infer<typeof updateCredentialsSchema>;
 export type SearchParams = z.infer<typeof searchSchema>;

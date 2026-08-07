@@ -31,11 +31,26 @@ export type PlanoItemFonte = {
   cuidados: string | null;
 };
 
-/** Ajuste esparso de uma folha — só o que difere do protocolo. */
+/**
+ * Ajuste esparso de uma folha — só o que difere do protocolo.
+ *
+ * Escrito de DOIS lugares: o formulário de criação do orçamento e o editor
+ * de cronograma. Quem grava faz REPLACE do objeto inteiro (`salvarAjustes`),
+ * então todo campo aqui precisa existir nos dois schemas de escrita — um
+ * campo aceito só num deles é apagado silenciosamente pelo outro.
+ */
 export type AjusteItem = {
   via?: Via | null;
   dose?: string | null;
   cuidados?: string | null;
+  /**
+   * Sobrescreve `inicio_dias` do protocolo SÓ nesta folha. É o item inteiro
+   * que se desloca; `sessoes` continua sendo remanejamento PONTUAL e vence
+   * por sessão. Definir o início não é remanejar N sessões — se fosse
+   * gravado como N offsets explícitos, todas apareceriam marcadas como
+   * ajustadas e o sinal de "esta data foi mexida" viraria ruído.
+   */
+  inicio_dias?: number | null;
   /** índice ORIGINAL da sessão (1-based) → offset em dias a partir do D0. */
   sessoes?: Record<string, number>;
 };

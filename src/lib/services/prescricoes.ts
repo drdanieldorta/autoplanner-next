@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import { canonicalJson } from "@/lib/prescricao/canonical";
+import { isVia } from "@/lib/prescricao/enums";
 import { projetarPlano, type ItemCru } from "@/lib/prescricao/project";
 import type {
   PlanoExecucao,
@@ -151,21 +152,26 @@ export async function loadPrescricaoFonte(args: {
   }
 
   // Procedimentos avulsos vivem em JSONB sem id estável — indexamos por
-  // posição. Só entram no cronograma; não têm camada clínica (o form de
-  // orçamento não a expõe).
+  // posição. A camada clínica deles mora no PRÓPRIO objeto, não no delta:
+  // sem linha em `protocol_items`, não existe modelo do qual desviar.
+  // Gravada por `POST /api/propostas` (ProcedimentoAdicionalSchema).
   const adicionais = Array.isArray(proposta.procedimentos_adicionais)
     ? (proposta.procedimentos_adicionais as Array<Record<string, unknown>>)
     : [];
   adicionais.forEach((extra, i) => {
+    const via = extra.via;
     itens.push({
       ref: `extra:${i}`,
       procedure_name: String(extra.procedure_name ?? "Procedimento"),
       quantity: Number(extra.quantity ?? 1),
       interval_days: Number(extra.interval_days ?? 0),
-      inicio_dias: 0,
-      dose: null,
-      via: null,
-      cuidados: null,
+      inicio_dias: Number(extra.inicio_dias ?? 0),
+      dose: typeof extra.dose === "string" ? extra.dose : null,
+      // JSONB não tem CHECK: valida contra o enum em vez de confiar.
+      // `normalizarItem` cairia no heurístico de nome para valor inválido,
+      // o que é o comportamento certo para "via desconhecida".
+      via: isVia(via) ? via : null,
+      cuidados: typeof extra.cuidados === "string" ? extra.cuidados : null,
     });
   });
 

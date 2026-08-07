@@ -4,23 +4,18 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireUser } from "@/lib/auth";
-import { VIAS } from "@/lib/prescricao/enums";
-import type { PrescricaoAjustes } from "@/lib/prescricao/types";
+import { limparAjustes } from "@/lib/prescricao/ajustes";
 import { salvarAjustes } from "@/lib/services/prescricoes";
-
-const AjusteItemSchema = z.object({
-  via: z.enum(VIAS).nullable().optional(),
-  cuidados: z.string().max(500).nullable().optional(),
-  /** índice original da sessão (1-based) → offset em dias a partir do D0. */
-  sessoes: z.record(z.string(), z.number().int().min(0).max(3650)).optional(),
-});
+import { prescricaoAjustesSchema } from "@/lib/validations";
 
 const SalvarSchema = z.object({
   proposta_id: z.string().uuid(),
   inicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida"),
   observacoes: z.string().max(1000).nullable().optional(),
   alergias: z.string().max(500).nullable().optional(),
-  ajustes: z.record(z.string(), AjusteItemSchema),
+  // Schema compartilhado com a criação do orçamento DE PROPÓSITO: como
+  // `salvarAjustes` faz replace, um campo aceito só lá seria apagado aqui.
+  ajustes: prescricaoAjustesSchema,
 });
 
 export type CronogramaFormState =
@@ -55,21 +50,7 @@ export async function salvarCronograma(
     };
   }
 
-  // Descarta entradas vazias: um ajuste que não ajusta nada só polui o delta
-  // e faria o hash mudar sem o documento mudar.
-  const limpos: PrescricaoAjustes = {};
-  for (const [ref, aj] of Object.entries(parsed.data.ajustes)) {
-    const sessoes = aj.sessoes ?? {};
-    const temSessoes = Object.keys(sessoes).length > 0;
-    const temVia = Boolean(aj.via);
-    const temCuidados = Boolean((aj.cuidados ?? "").trim());
-    if (!temSessoes && !temVia && !temCuidados) continue;
-    limpos[ref] = {
-      ...(temVia ? { via: aj.via } : {}),
-      ...(temCuidados ? { cuidados: (aj.cuidados ?? "").trim() } : {}),
-      ...(temSessoes ? { sessoes } : {}),
-    };
-  }
+  const limpos = limparAjustes(parsed.data.ajustes);
 
   try {
     await salvarAjustes({

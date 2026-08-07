@@ -68,6 +68,18 @@ function rotuloDia(offset: number): string {
   return offset === 0 ? "D0" : `D+${offset}`;
 }
 
+/**
+ * Soma dias a uma data de calendário (yyyy-MM-dd → yyyy-MM-dd).
+ *
+ * Exportado para a UI conseguir mostrar "D+14 = 21/08/2026" usando ESTA
+ * aritmética, e não uma paralela: um hint que discorda da agenda impressa
+ * é pior do que hint nenhum.
+ */
+export function addDiasISO(inicio: string, dias: number): string {
+  if (!isDataValida(inicio)) return inicio;
+  return formatDia(addDias(parseDiaLocal(inicio), dias));
+}
+
 /** Normaliza um item cru, resolvendo a via (banco → heurístico → null). */
 export function normalizarItem(raw: ItemCru): PlanoItemFonte {
   const viaBanco = raw.via as Via | null | undefined;
@@ -198,12 +210,22 @@ export function projetarPlano(input: ProjetarInput): PlanoExecucao {
     const doseAjustada =
       aj && typeof aj.dose === "string" ? aj.dose.trim() : null;
 
+    // Início do item deslocado só nesta folha. Vira a nova base de
+    // `expandirSessoes`; `sessoes` continua vencendo por sessão, então quem
+    // remanejou uma data específica não a perde ao mudar o início.
+    const inicioBruto = aj?.inicio_dias;
+    const inicioAjustado =
+      typeof inicioBruto === "number" && Number.isFinite(inicioBruto)
+        ? Math.max(0, Math.trunc(inicioBruto))
+        : null;
+
     const comAjuste: PlanoItemFonte = {
       ...fonte,
       via: viaAjustada ?? fonte.via,
       via_inferida: viaAjustada ? false : fonte.via_inferida,
       cuidados: cuidadosAjustados || fonte.cuidados,
       dose: doseAjustada || fonte.dose,
+      inicio_dias: inicioAjustado ?? fonte.inicio_dias,
     };
 
     const sessoes = expandirSessoes(comAjuste, inicioDate, aj?.sessoes);
@@ -215,6 +237,8 @@ export function projetarPlano(input: ProjetarInput): PlanoExecucao {
         Boolean(viaAjustada) ||
         Boolean(cuidadosAjustados) ||
         Boolean(doseAjustada) ||
+        // Igual ao protocolo não é ajuste — marcar seria ruído.
+        (inicioAjustado !== null && inicioAjustado !== fonte.inicio_dias) ||
         sessoes.some((x) => x.ajustada),
     };
   });

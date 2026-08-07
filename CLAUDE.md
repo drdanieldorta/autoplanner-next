@@ -181,6 +181,7 @@ npm install --legacy-peer-deps
   - [~] Webhook outbound — **decisão 2026-05-02: descartado.** Sistema é tudo interno por ora. Removidos `lib/integrations/webhook-outbound.ts`, `/api/cron/webhook-dlq`, `vercel.json` e os 2 `dispatchWebhook` calls em `POST /api/propostas` e callback Authentique. Tabelas `webhook_endpoints` + `webhook_dlq` permanecem no Supabase (sem uso). Re-implementar é trivial — git log tem o histórico se a decisão mudar.
   - [x] Permissões finas em `user_tool_permissions` — `lib/services/user-tools.ts` (listToolsForUser + getFuncionarioToolPermissions). Endpoint `GET /api/funcionarios/[id]/permissions` para lazy-load no dialog. Server Action `setFuncionarioToolPermissions` (delete-then-insert idempotente). Botão `<PermissoesDialog>` na listagem de funcionários (admins recebem botão disabled — acesso implícito). `/minhas-ferramentas` saiu do `<ComingSoon>`: Server Component que para admin lista todas as `company_tools.enabled`, para não-admin filtra por `user_tool_permissions`. Mapa nome→rota replica heurístico do Vite legacy. 33 rotas no build, lint clean.
 - [x] **Fase 5.1: Cronograma de aplicações (enfermagem)** — camada clínica mínima no protocolo (`protocols.cuidados_gerais/sinais_alerta`, `protocol_items.via/cuidados`) + `lib/prescricao/*` (módulos neutros: `projetarPlano` pura, `canonicalJson` para idempotência) + renderizador code-driven `templates/default-execucao.ts` + `POST /api/prescricoes/gerar` e `GET /api/prescricoes/[id]/pdf`. Anexa ao prontuário Feegow via `/patient/upload-base64`, encadeado automaticamente após o envio do contrato. 35 rotas no build. Ver "Cronograma de aplicações" abaixo.
+- [x] **Fase 5.2: Camada clínica na criação do orçamento** — a grade clínica (via, dose, começa em, observações) passou a existir também em `/orcamentos/novo`, gravando no MESMO delta `prescricao_ajustes` que o editor de cronograma já usava, e nos avulsos gravando dentro de `procedimentos_adicionais`. `<ClinicalGrid>` + `<DuracaoInput>` compartilhados com o form de protocolo. Corrigidos 3 defeitos verificados: o `map` em `orcamentos/novo/page.tsx` descartava `id`/`via`/`dose`/`inicio_dias`/`cuidados`; `AjusteItemSchema` não aceitava `dose` (tornando dose por paciente inalcançável, e — com `salvarAjustes` fazendo replace — apagável); e a contagem "sem via" era falso positivo estrutural, acusando todo item de todo protocolo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
 
 ## Cronograma de aplicações (folha de enfermagem)
@@ -207,11 +208,38 @@ o único que fala com a Feegow.
 separado de `prescricao_hash`. Gerar e editar não incrementam nada.
 
 **Ajustes por paciente** vivem em `propostas.prescricao_ajustes` como delta
-esparso: `{"<item_ref>": {via, cuidados, sessoes: {"<n>": offset_dias}}}`. A
-chave da sessão é o índice ORIGINAL (estável), enquanto o número impresso é a
+esparso: `{"<item_ref>": {via, dose, cuidados, inicio_dias, sessoes: {"<n>": offset_dias}}}`.
+A chave da sessão é o índice ORIGINAL (estável), enquanto o número impresso é a
 posição cronológica após o remanejo — se a chave mudasse ao reordenar, editar
 duas vezes perderia o primeiro ajuste. A cascata ("empurrar as seguintes") é
 resolvida na UI e gravada como offsets explícitos, para o delta ser auditável.
+
+`inicio_dias` no delta desloca o ITEM inteiro; `sessoes` continua sendo
+remanejamento pontual e vence por sessão. Não gravar deslocamento de item como
+N offsets de sessão: as N apareceriam marcadas como ajustadas e o selo
+"ajustada" deixaria de significar "esta data foi mexida".
+
+**`AjusteItem` tem DOIS escritores** (2026-08-07): o formulário de criação do
+orçamento e o editor de cronograma. `salvarAjustes` faz **replace**, não merge
+— então um campo aceito só por um dos dois é apagado em silêncio pelo outro.
+Foi exatamente o que houve com `dose`, que existia no tipo e na projeção mas
+nunca no schema de escrita. Por isso o schema Zod é **um só**
+(`prescricaoAjustesSchema` em `lib/validations.ts`), importado pelos dois, e a
+limpeza do delta também (`limparAjustes` em `lib/prescricao/ajustes.ts`).
+⚠️ Em `limparAjustes`, `inicio_dias: 0` é **significativo** (num item que o
+protocolo manda começar em D+14, zero quer dizer "neste paciente começa na 1ª
+sessão"); só via/dose/cuidados vazios são descartados.
+
+**Camada clínica do avulso.** Procedimento extra não tem linha em
+`protocol_items`, logo não tem modelo do qual desviar: a camada clínica dele
+mora DENTRO de `propostas.procedimentos_adicionais` (JSONB), não no delta.
+Tem sua própria lista de lugares a tocar, paralela à dos "CINCO lugares":
+1. `orcamentoProcedureSchema` (`lib/validations.ts`)
+2. os dois `append(...)` em `orcamento-form.tsx`
+3. `ProcedimentoAdicionalSchema` em `api/propostas/route.ts` — **não**
+   `ProcedimentoSchema`, que alimenta a proposta da Feegow e não tem esses campos
+4. `loadPrescricaoFonte` (`lib/services/prescricoes.ts`) — o JSONB não tem
+   CHECK, então `via` é validada contra o enum na leitura
 
 **Regras que não podem ser quebradas:**
 - **A folha não carrega dinheiro.** Nenhum `formatBRL`, nenhuma forma de pagamento — ela
@@ -242,6 +270,17 @@ folha sai byte a byte idêntica à de antes da feature — inclusive o rodapé a
 "não informa dose" e a orientação sem menção a dose. Com dose, a coluna DOSE aparece e as
 duas frases trocam. Diluente e velocidade seguem fora de escopo nos dois casos. Se dose
 virar rotina, revisitar a assinatura do prescritor (hoje ele é referência, não signatário).
+
+**Onde a camada clínica é definida (2026-08-07).** Dois pontos, um armazenamento:
+o **protocolo** define o modelo (`protocol_items.*`), e o **orçamento** define o
+desvio deste paciente (delta / JSONB do avulso). A grade é a mesma nas duas telas
+(`app/(app)/_components/clinical-grid.tsx`, componente controlado sem
+acoplamento a RHF) para que ensinem a mesma coisa. "Começa em" usa
+`<DuracaoInput>`: o usuário digita em dias/semanas/meses, **grava sempre em
+dias**, e a tela mostra a resolução ("2 meses · 60 dias · 09/10/2026") porque
+mês vale 30 dias fixos num modelo de offset — aceitar "2 meses" e agendar 60
+dias em silêncio seria armadilha. O hint usa `addDiasISO` de `project.ts`, a
+MESMA aritmética da agenda impressa; não criar uma paralela.
 
 **`inicio_dias`** é offset a partir do D0, não data — o protocolo é modelo reutilizável.
 O offset padrão de uma sessão é `inicio_dias + idx * interval_days`. Ajustes por paciente
