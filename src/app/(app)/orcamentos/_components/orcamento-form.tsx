@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -28,6 +28,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandSeparator,
 } from "@/components/ui/command";
 import {
   Popover,
@@ -94,6 +95,10 @@ type ProtocolOption = ProtocolOptionDocs & {
 type Props = {
   hasFeegow: boolean;
   feegowError: string | null;
+  /** Sem Feegow e com CRM: `patients` é a 1ª página de contatos "Paciente". */
+  hasCrm: boolean;
+  crmError: string | null;
+  crmHasMore: boolean;
   procedures: OrcamentoProcedureOption[];
   patients: OrcamentoPatientOption[];
   professionals: OrcamentoProfessionalOption[];
@@ -104,6 +109,9 @@ type Props = {
 export function OrcamentoForm({
   hasFeegow,
   feegowError,
+  hasCrm,
+  crmError,
+  crmHasMore,
   procedures,
   patients,
   professionals,
@@ -148,6 +156,23 @@ export function OrcamentoForm({
 
   const [patientPopoverOpen, setPatientPopoverOpen] = useState(false);
   const [professionalPopoverOpen, setProfessionalPopoverOpen] = useState(false);
+
+  // Dropdown do CRM (modo sem Feegow). A busca é do servidor — o CRM filtra
+  // por texto — e `patients` só semeia a lista com a primeira página.
+  // `crmContact` é a ORIGEM do que está nos inputs, não o valor: editar um
+  // input depois não a apaga, e o payload segue `paciente_id: "manual"`.
+  const [crmResults, setCrmResults] = useState<OrcamentoPatientOption[]>(
+    patients,
+  );
+  const [crmMore, setCrmMore] = useState(crmHasMore);
+  const [crmQuery, setCrmQuery] = useState("");
+  const [crmLoading, setCrmLoading] = useState(false);
+  const [crmSearchError, setCrmSearchError] = useState<string | null>(null);
+  const [crmContact, setCrmContact] = useState<OrcamentoPatientOption | null>(
+    null,
+  );
+  const crmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const crmAbort = useRef<AbortController | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(createOrcamentoSchema),
@@ -209,6 +234,19 @@ export function OrcamentoForm({
     [patients, patientId],
   );
 
+  // Sem Feegow, CPF e telefone são obrigatórios (ver `onSubmit`). O destaque
+  // só acende quando faz sentido: depois de escolher um contato do CRM (o
+  // que faltou não veio de lá) ou depois de uma tentativa de salvar — um
+  // formulário recém-aberto não nasce vermelho.
+  const patientCpf = form.watch("patient_cpf") ?? "";
+  const patientPhone = form.watch("patient_phone") ?? "";
+  const showMissing =
+    !hasFeegow && (crmContact !== null || form.formState.submitCount > 0);
+  const cpfMissing =
+    showMissing && patientCpf.replace(/\D/g, "").length !== 11;
+  const phoneMissing =
+    showMissing && patientPhone.replace(/\D/g, "").length < 10;
+
   const selectedProfessional = useMemo(
     () => professionals.find((p) => p.id === professionalId),
     [professionals, professionalId],
@@ -265,6 +303,70 @@ export function OrcamentoForm({
           // ignora — CPF fica em branco e user pode preencher
         });
     }
+  };
+
+  /** Busca no CRM com debounce; a resposta mais antiga em voo é descartada. */
+  const searchCrm = (q: string) => {
+    setCrmQuery(q);
+    if (crmTimer.current) clearTimeout(crmTimer.current);
+    crmTimer.current = setTimeout(async () => {
+      crmAbort.current?.abort();
+      const ctrl = new AbortController();
+      crmAbort.current = ctrl;
+      setCrmLoading(true);
+      setCrmSearchError(null);
+      try {
+        const res = await fetch(
+          `/api/crm/pacientes?q=${encodeURIComponent(q.trim())}`,
+          { signal: ctrl.signal },
+        );
+        if (!res.ok) {
+          const err = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(err.error ?? "Falha ao buscar no CRM");
+        }
+        const data = (await res.json()) as {
+          items: OrcamentoPatientOption[];
+          hasMore: boolean;
+        };
+        setCrmResults(data.items);
+        setCrmMore(data.hasMore);
+      } catch (err) {
+        if (ctrl.signal.aborted) return;
+        setCrmSearchError(
+          err instanceof Error ? err.message : "Falha ao buscar no CRM",
+        );
+      } finally {
+        if (!ctrl.signal.aborted) setCrmLoading(false);
+      }
+    }, 350);
+  };
+
+  const onSelectCrmContact = (contact: OrcamentoPatientOption) => {
+    setCrmContact(contact);
+    form.setValue("patient_id", contact.id, { shouldValidate: true });
+    form.setValue("patient_name", contact.name, { shouldValidate: true });
+    // O que o CRM não trouxe fica em branco e destacado — o usuário completa
+    // nos inputs abaixo, que continuam editáveis.
+    form.setValue("patient_cpf", contact.cpf ? formatCPF(contact.cpf) : "");
+    form.setValue("patient_phone", contact.phone);
+    form.setValue("patient_email", contact.email);
+    form.setValue("patient_birth", contact.birth);
+    form.setValue("patient_neighborhood", "");
+    setPatientPopoverOpen(false);
+  };
+
+  const onManualPatient = () => {
+    setCrmContact(null);
+    form.setValue("patient_id", "");
+    form.setValue("patient_name", "");
+    form.setValue("patient_cpf", "");
+    form.setValue("patient_phone", "");
+    form.setValue("patient_email", "");
+    form.setValue("patient_birth", "");
+    form.setValue("patient_neighborhood", "");
+    setPatientPopoverOpen(false);
   };
 
   const onSelectProfessional = (prof: OrcamentoProfessionalOption) => {
@@ -472,6 +574,27 @@ export function OrcamentoForm({
       return;
     }
 
+    // Sem Feegow (paciente manual ou do CRM), CPF e telefone valem para os
+    // DOIS botões (decisão 2026-09-22): não existe tela para completar
+    // depois, e um rascunho sem CPF viraria beco sem saída na hora de
+    // enviar o contrato. `envio-manual` recusa no servidor também.
+    //
+    // Lê de `values`, não de `cpfMissing`/`phoneMissing`: esses dois vêm do
+    // render anterior ao clique, quando `submitCount` ainda era 0 — o
+    // destaque acende depois, nesta mesma tentativa.
+    if (!hasFeegow) {
+      const cpfOk =
+        (values.patient_cpf ?? "").replace(/\D/g, "").length === 11;
+      const phoneOk =
+        (values.patient_phone ?? "").replace(/\D/g, "").length >= 10;
+      if (!cpfOk || !phoneOk) {
+        toast.error(
+          "CPF e telefone do paciente são obrigatórios para o contrato",
+        );
+        return;
+      }
+    }
+
     // Salvar sem documento é legítimo (rascunho); ENVIAR não é. Barrar aqui
     // evita criar o orçamento e só então descobrir, no encadeamento do
     // envio, que não havia o que assinar — hoje não há tela para corrigir a
@@ -669,6 +792,16 @@ export function OrcamentoForm({
         </Alert>
       )}
 
+      {crmError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            Não foi possível carregar os pacientes do CRM: {crmError}.
+            Preencha os dados do paciente manualmente.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         {/* Coluna esquerda: identidade + parâmetros */}
         <Card className="p-6 space-y-4">
@@ -745,6 +878,108 @@ export function OrcamentoForm({
               </Popover>
             ) : (
               <div className="space-y-2 mt-1">
+                {hasCrm && (
+                  <Popover
+                    open={patientPopoverOpen}
+                    onOpenChange={setPatientPopoverOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        className="w-full justify-between font-normal h-auto py-2"
+                      >
+                        {crmContact ? (
+                          <div className="flex flex-col items-start">
+                            <span>{crmContact.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              CRM · {crmContact.phone || "sem telefone"}
+                            </span>
+                          </div>
+                        ) : (
+                          "Buscar paciente no CRM"
+                        )}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      className="w-[--radix-popover-trigger-width] p-0"
+                      align="start"
+                    >
+                      {/* O filtro é do servidor. Se o cmdk filtrasse de novo,
+                          esconderia o item fixo "Preencher manualmente". */}
+                      <Command shouldFilter={false}>
+                        <CommandInput
+                          placeholder="Nome, telefone ou e-mail..."
+                          value={crmQuery}
+                          onValueChange={searchCrm}
+                        />
+                        <CommandList>
+                          {crmSearchError ? (
+                            <p className="p-3 text-sm text-destructive">
+                              {crmSearchError}
+                            </p>
+                          ) : crmLoading ? (
+                            <p className="p-3 text-sm text-muted-foreground">
+                              Buscando...
+                            </p>
+                          ) : crmResults.length === 0 ? (
+                            <p className="p-3 text-sm text-muted-foreground">
+                              Nenhum paciente encontrado no CRM.
+                            </p>
+                          ) : null}
+                          {crmResults.length > 0 && (
+                            <CommandGroup>
+                              {crmResults.map((contact) => (
+                                <CommandItem
+                                  key={contact.id}
+                                  value={contact.id}
+                                  onSelect={() => onSelectCrmContact(contact)}
+                                  className="flex items-center justify-between"
+                                >
+                                  <div className="flex flex-col">
+                                    <span className="font-medium">
+                                      {contact.name}
+                                    </span>
+                                    <span className="text-xs text-foreground/60">
+                                      {contact.phone ||
+                                        contact.email ||
+                                        "sem telefone"}
+                                    </span>
+                                  </div>
+                                  <Check
+                                    className={cn(
+                                      "ml-auto h-4 w-4",
+                                      crmContact?.id === contact.id
+                                        ? "opacity-100"
+                                        : "opacity-0",
+                                    )}
+                                  />
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          )}
+                          {crmMore && !crmLoading && !crmSearchError && (
+                            <p className="px-3 pb-2 text-xs text-muted-foreground">
+                              Há mais resultados. Digite para refinar.
+                            </p>
+                          )}
+                          <CommandSeparator />
+                          <CommandGroup>
+                            <CommandItem
+                              value="__manual__"
+                              onSelect={onManualPatient}
+                            >
+                              <Plus className="mr-2 h-4 w-4" />
+                              Não está na lista? Preencher manualmente
+                            </CommandItem>
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                )}
                 <Input
                   placeholder="Nome do paciente"
                   value={form.watch("patient_name") ?? ""}
@@ -757,15 +992,27 @@ export function OrcamentoForm({
                 />
                 <Input
                   placeholder="CPF do paciente"
-                  value={form.watch("patient_cpf") ?? ""}
+                  value={patientCpf}
                   onChange={(e) =>
                     form.setValue("patient_cpf", formatCPF(e.target.value))
                   }
                   maxLength={14}
+                  aria-invalid={cpfMissing || undefined}
+                  className={cn(
+                    cpfMissing &&
+                      "border-destructive focus-visible:ring-destructive",
+                  )}
                 />
+                {cpfMissing && (
+                  <p className="text-xs text-destructive">
+                    CPF obrigatório para o contrato
+                    {crmContact ? " · não veio do CRM, informe manualmente" : ""}
+                    .
+                  </p>
+                )}
                 <Input
                   placeholder="Telefone do paciente Ex: (11) 99999-9999"
-                  value={form.watch("patient_phone") ?? ""}
+                  value={patientPhone}
                   onChange={(e) =>
                     form.setValue(
                       "patient_phone",
@@ -773,7 +1020,19 @@ export function OrcamentoForm({
                     )
                   }
                   maxLength={15}
+                  aria-invalid={phoneMissing || undefined}
+                  className={cn(
+                    phoneMissing &&
+                      "border-destructive focus-visible:ring-destructive",
+                  )}
                 />
+                {phoneMissing && (
+                  <p className="text-xs text-destructive">
+                    Telefone obrigatório para a assinatura via WhatsApp
+                    {crmContact ? " · não veio do CRM, informe manualmente" : ""}
+                    .
+                  </p>
+                )}
               </div>
             )}
             {form.formState.errors.patient_id && (

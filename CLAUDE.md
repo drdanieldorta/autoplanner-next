@@ -79,6 +79,9 @@ autoplanner-next/
 │       ├── currency.ts           ← formatCurrency, parseCurrencyToCents
 │       ├── masks.ts              ← formatCPF, formatCurrencyInput
 │       ├── validations.ts        ← schemas Zod (protocols, propostas, credentials)
+│       ├── crm/
+│       │   └── contacts.ts       ← neutro: tag "Paciente", parse de customFields
+│       │                            (CPF, nascimento), telefone do CRM → máscara
 │       ├── services/             ← server-only, encapsula queries Supabase
 │       │   ├── protocols.ts      ← listProtocols, getProtocolById
 │       │   ├── propostas.ts      ← listPropostas, getPropostaById
@@ -183,7 +186,58 @@ npm install --legacy-peer-deps
 - [x] **Fase 5.1: Cronograma de aplicações (enfermagem)** — camada clínica mínima no protocolo (`protocols.cuidados_gerais/sinais_alerta`, `protocol_items.via/cuidados`) + `lib/prescricao/*` (módulos neutros: `projetarPlano` pura, `canonicalJson` para idempotência) + renderizador code-driven `templates/default-execucao.ts` + `POST /api/prescricoes/gerar` e `GET /api/prescricoes/[id]/pdf`. Anexa ao prontuário Feegow via `/patient/upload-base64`, encadeado automaticamente após o envio do contrato. 35 rotas no build. Ver "Cronograma de aplicações" abaixo.
 - [x] **Fase 5.2: Camada clínica na criação do orçamento** — a grade clínica (via, dose, começa em, observações) passou a existir também em `/orcamentos/novo`, gravando no MESMO delta `prescricao_ajustes` que o editor de cronograma já usava, e nos avulsos gravando dentro de `procedimentos_adicionais`. `<ClinicalGrid>` + `<DuracaoInput>` compartilhados com o form de protocolo. Corrigidos 3 defeitos verificados: o `map` em `orcamentos/novo/page.tsx` descartava `id`/`via`/`dose`/`inicio_dias`/`cuidados`; `AjusteItemSchema` não aceitava `dose` (tornando dose por paciente inalcançável, e — com `salvarAjustes` fazendo replace — apagável); e a contagem "sem via" era falso positivo estrutural, acusando todo item de todo protocolo.
 - [x] **Fase 5.3: Vários documentos por plano, numa assinatura só** — `protocol_contracts` + `proposta_contracts` (join com `ordem`) e `incluir_tcle_padrao` em ambos. `buildContractHtml` virou `buildContractsHtml`, refatorada em fragmento + shell. `<DocumentosSelector>` compartilhado por protocolo e orçamento. Ver "Documentos do plano" abaixo.
+- [x] **Fase 5.4: Pacientes do CRM no orçamento (fallback sem Feegow)** — empresa sem `feegow_token` e com `crm_token` ganha um combobox que busca contatos etiquetados "Paciente" na Helena/WTS (`POST /contact/filter`, busca do servidor conforme digita via `GET /api/crm/pacientes?q=`). CPF e nascimento vêm de `customFields` quando a conta tem esses campos; o que não vier é digitado nos mesmos inputs do modo manual. CPF e telefone passaram a ser obrigatórios para paciente manual/CRM (form + `envio-manual`). Ver "Pacientes do CRM" abaixo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
+
+## Pacientes do CRM (fallback sem Feegow)
+
+Só para empresa **sem** `feegow_token` (decisão 2026-09-22 — Feegow configurada
+mas fora do ar continua sem fallback). Com `crm_token`, `loadOrcamentoFormData`
+busca a primeira página de contatos etiquetados **"Paciente"** na Helena/WTS e
+liga `hasCrm`; a busca conforme digita vai a `GET /api/crm/pacientes?q=`, que
+repassa `q` como `textFilter` da API (o CRM procura em nome, telefone e e-mail).
+Contas com **milhares** de pacientes existem — por isso a busca é do servidor e
+o dropdown mostra uma página de 20, nunca a lista inteira.
+
+**Chamada:** `helena(token).filterContacts` → `POST /contact/filter` com
+`{ tagNames: ["Paciente"], textFilter, status: "ACTIVE", includeDetails: ["CustomFields"], pageNumber, pageSize }`.
+Três detalhes que não podem cair:
+- **`includeDetails: ["CustomFields"]`** — sem ele o CRM omite `customFields`,
+  e CPF e nascimento moram lá.
+- **Sem `orderBy`** — o nome do campo de ordenação não está documentado e um
+  valor inválido derruba a chamada inteira. A página é ordenada por nome aqui.
+- **Timeout de 8s** — a primeira página é buscada dentro do render de
+  `/orcamentos/novo`; um CRM lento não pode segurar a página.
+
+**customFields é livre por conta.** A chave é casada normalizada (sem acento,
+caixa ou pontuação): `"CPF"` → `cpf` exato; nascimento → chave contendo
+`nascimento` (`"Data de Nascimento"`, `data_nascimento`). Nem toda conta tem os
+campos — o valor ausente vira `""` e o usuário completa no input. CPF só é
+aceito com 11 dígitos; nascimento é normalizado para `dd/mm/aaaa`. Tudo em
+`lib/crm/contacts.ts` (neutro, testável sem o Next).
+
+**Nada muda depois da seleção.** O contato do CRM só preenche os mesmos inputs
+do modo manual (nome, CPF, telefone; e-mail e nascimento vão junto sem campo
+visível). `paciente_id` grava `"manual"` como sempre; **não há coluna nova** nem
+rastro do id do contato — rastrear o contato depois foi descartado. Os inputs
+continuam editáveis, e "Não está na lista? Preencher manualmente" só limpa a
+seleção. Falha do CRM na abertura vira `crmError` (Alert) e o formulário volta a
+ser o manual de sempre.
+
+**CPF e telefone obrigatórios para paciente manual/CRM**, nos dois botões
+("Salvar" e "Salvar e enviar"), porque **não existe tela de edição de orçamento**:
+um rascunho sem CPF viraria beco sem saída na hora de enviar o contrato. O
+`envio-manual` recusa com 422 pelo mesmo critério (CPF com 11 dígitos, telefone
+com 10+), o que cobre o botão da tela de detalhe e os orçamentos antigos. **Modo
+Feegow fica de fora** dessa regra: lá o CPF vem do prontuário e o formulário não
+tem campo para digitá-lo — exigir criaria o mesmo beco sem saída. O destaque
+vermelho nos inputs só acende após escolher um contato do CRM ou após uma
+tentativa de salvar; um formulário recém-aberto não nasce vermelho.
+
+**Telefone do CRM** vem como E.164 sem `+` (`5511999999999`). `crmPhoneToDisplay`
+devolve celular BR na máscara do campo (`(11) 99999-9999`) e todo o resto já em
+E.164 com `+`, porque `phoneToE164` só prefixa 55 em exatamente 11 dígitos — um
+fixo mascarado como `(11) 33334-444` viraria `+1133334444`.
 
 ## Documentos do plano (contrato + termos)
 
