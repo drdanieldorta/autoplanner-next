@@ -68,6 +68,34 @@ export async function POST(req: Request) {
   if (!built.ok) return jsonError(built.error, built.status);
   const { html, docName, proposta } = built.value;
 
+  // Paciente manual ou vindo do CRM: CPF e telefone obrigatórios (decisão
+  // 2026-09-22). Sem telefone a Authentique recusa o signatário com erro
+  // genérico; sem CPF o contrato sairia "[CPF não informado]". O modo Feegow
+  // fica de fora: lá o CPF vem do prontuário e o formulário não tem campo
+  // para digitá-lo — exigir aqui criaria um beco sem saída. Vale para o
+  // botão da tela de detalhe também, que é o único caminho dos orçamentos
+  // antigos.
+  const pacienteId = String(proposta.paciente_id ?? "");
+  if (!pacienteId || pacienteId === "manual") {
+    const cpf = String(proposta.paciente_cpf ?? "").replace(/\D/g, "");
+    const telefone = String(proposta.paciente_telefone ?? "").replace(
+      /\D/g,
+      "",
+    );
+    if (cpf.length !== 11) {
+      return jsonError(
+        "CPF do paciente ausente ou incompleto. Ele é obrigatório para enviar o contrato.",
+        422,
+      );
+    }
+    if (telefone.length < 10) {
+      return jsonError(
+        "Telefone do paciente ausente. Ele é obrigatório para a assinatura via WhatsApp.",
+        422,
+      );
+    }
+  }
+
   let pdfBuffer: Buffer;
   try {
     pdfBuffer = await generatePdfFromHtml(html);
