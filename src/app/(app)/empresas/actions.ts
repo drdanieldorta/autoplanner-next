@@ -16,17 +16,30 @@ const optionalString = z
   .optional()
   .transform((v) => (v ? v : null));
 
+// Documento opcional: guarda SÓ dígitos, ou null.
+//
+// ⚠️ O formulário mascara enquanto se digita (formatCNPJ/formatCPF em
+// empresa-form.tsx), então o que chega aqui vem como "12.924.931/0001-65".
+// Gravar assim quebra qualquer busca por documento — e o painel financeiro
+// (painel_mdia) está prestes a pôr um CHECK `^[0-9]+$` nessas duas colunas,
+// que rejeitaria a escrita inteira com 23514.
+const optionalDocumento = z
+  .string()
+  .trim()
+  .optional()
+  .transform((v) => stripDigits(v) || null);
+
 const CompanyFormSchema = z.object({
   name: z
     .string()
     .trim()
     .min(2, "Nome da empresa é obrigatório")
     .max(120, "Nome muito longo"),
-  cnpj: optionalString,
+  cnpj: optionalDocumento,
   nicho: optionalString,
   endereco: optionalString,
   ceo_name: optionalString,
-  ceo_cpf: optionalString,
+  ceo_cpf: optionalDocumento,
 });
 
 export type EmpresaFormState =
