@@ -82,6 +82,12 @@ autoplanner-next/
 │       ├── crm/
 │       │   └── contacts.ts       ← neutro: tag "Paciente", parse de customFields
 │       │                            (CPF, nascimento), telefone do CRM → máscara
+│       ├── contracts/
+│       │   ├── custom-doc.ts     ← neutro: Markdown → HTML do modelo do usuário,
+│       │   │                        tabela de procedimentos, shell do PDF, dados da prévia
+│       │   ├── build-html.ts     ← server-only: monta o pacote (modelos + TCLE) por proposta
+│       │   ├── variables.ts      ← neutro: CONTRACT_VARIABLES
+│       │   └── templates/        ← TCLE padrão code-driven
 │       ├── services/             ← server-only, encapsula queries Supabase
 │       │   ├── protocols.ts      ← listProtocols, getProtocolById
 │       │   ├── propostas.ts      ← listPropostas, getPropostaById
@@ -187,6 +193,7 @@ npm install --legacy-peer-deps
 - [x] **Fase 5.2: Camada clínica na criação do orçamento** — a grade clínica (via, dose, começa em, observações) passou a existir também em `/orcamentos/novo`, gravando no MESMO delta `prescricao_ajustes` que o editor de cronograma já usava, e nos avulsos gravando dentro de `procedimentos_adicionais`. `<ClinicalGrid>` + `<DuracaoInput>` compartilhados com o form de protocolo. Corrigidos 3 defeitos verificados: o `map` em `orcamentos/novo/page.tsx` descartava `id`/`via`/`dose`/`inicio_dias`/`cuidados`; `AjusteItemSchema` não aceitava `dose` (tornando dose por paciente inalcançável, e — com `salvarAjustes` fazendo replace — apagável); e a contagem "sem via" era falso positivo estrutural, acusando todo item de todo protocolo.
 - [x] **Fase 5.3: Vários documentos por plano, numa assinatura só** — `protocol_contracts` + `proposta_contracts` (join com `ordem`) e `incluir_tcle_padrao` em ambos. `buildContractHtml` virou `buildContractsHtml`, refatorada em fragmento + shell. `<DocumentosSelector>` compartilhado por protocolo e orçamento. Ver "Documentos do plano" abaixo.
 - [x] **Fase 5.4: Pacientes do CRM no orçamento (fallback sem Feegow)** — empresa sem `feegow_token` e com `crm_token` ganha um combobox que busca contatos etiquetados "Paciente" na Helena/WTS (`POST /contact/filter`, busca do servidor conforme digita via `GET /api/crm/pacientes?q=`). CPF e nascimento vêm de `customFields` quando a conta tem esses campos; o que não vier é digitado nos mesmos inputs do modo manual. CPF e telefone passaram a ser obrigatórios para paciente manual/CRM (form + `envio-manual`). Ver "Pacientes do CRM" abaixo.
+- [x] **Fase 5.5: Modelo de contrato em Markdown + prévia** — `contracts.content` passou a ser Markdown, renderizado por `lib/contracts/custom-doc.ts` (neutro, `marked`) tanto no PDF quanto na prévia ao vivo do editor (`<iframe sandbox srcDoc>`, dados fictícios, marca da empresa). `{{procedimentos}}` sozinha numa linha vira tabela com valores; `{{subtotal}}`/`{{desconto}}`/`{{total}}` passaram a refletir o desconto real do orçamento (antes desconto era fixo em R$ 0,00). Ver "Modelo do usuário é Markdown" abaixo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
 
 ## Pacientes do CRM (fallback sem Feegow)
@@ -267,7 +274,36 @@ nas 189 propostas sem `contract_id`, porque ali "sem contrato" *significava* "ma
 TCLE". Sem essa linha, todo orçamento antigo ficaria sem documento nenhum. A coluna
 segue na tabela com `COMMENT`; não é mais lida. Não derrubar em produção.
 
-**Montagem — fragmento + shell** ([build-html.ts](src/lib/contracts/build-html.ts)):
+**Modelo do usuário é Markdown (2026-10-07).** `contracts.content` entra em
+`renderCustomContract` ([custom-doc.ts](src/lib/contracts/custom-doc.ts)) e vira HTML
+com `marked` (`gfm`, `breaks: true`). Antes, o conteúdo era injetado como HTML cru sem
+tratar quebra de linha: todo modelo colado em texto puro saía num bloco só, e um modelo
+em Markdown saía com `#` e `**` impressos. Nenhum contrato em produção tinha HTML, por
+isso a troca foi feita sem coluna de formato. Regras:
+
+- **Ordem de substituição.** `{{procedimentos}}` é resolvida ANTES do parse, porque gera
+  Markdown: sozinha numa linha vira **tabela** (4 colunas com valor por item; 2 colunas
+  se o orçamento não tem valores); no meio de uma frase vira a lista em texto de sempre
+  ("Nome (Qtd: 2), ..."). As demais variáveis entram DEPOIS do parse, **escapadas como
+  HTML** — um `*` ou `|` num nome não pode mexer no layout.
+- **Linha só de `_` é assinatura, não régua.** Em Markdown, `___` sozinho é `<hr>`; os
+  TCLEs legados usam "___________" acima de "Paciente:". `protegerLinhasDeAssinatura`
+  escapa esses traços antes do parse.
+- **CSS escopado em `.doc-custom`** ([custom-doc.ts](src/lib/contracts/custom-doc.ts)),
+  primeira regra intocada (fonte, tamanho, padding de 20mm). O TCLE padrão divide a folha
+  de estilo no mesmo PDF e não pode herdar nada daqui.
+- **Prévia = PDF.** O editor renderiza o mesmo `montarShell` + `renderCustomContract` num
+  `<iframe sandbox="">` com `previewSample()` (dados fictícios coerentes: 3.600 − 10% =
+  3.240). Só a marca vem pronta do servidor (`renderBrandingHeader`/`renderBrandingCss`
+  são server-only), via prop `preview` das páginas `/contratos/novo` e `/contratos/[id]`.
+- **Subtotal e desconto são reais.** `valor_total_cents` é o valor FINAL; o subtotal é a
+  soma dos itens (`protocol_items` + `procedimentos_adicionais`, desconto por item
+  incluído, a mesma conta do formulário de orçamento) e `desconto = subtotal − total`,
+  com o percentual ao lado quando houver. Orçamento legado sem valor por item imprime
+  subtotal = total e desconto zero, como sempre imprimiu. O TCLE padrão recebe o mesmo
+  `subtotal_cents`.
+
+**Montagem — fragmento + shell** ([custom-doc.ts](src/lib/contracts/custom-doc.ts), usado por [build-html.ts](src/lib/contracts/build-html.ts)):
 cada documento produz só o corpo, e um `montarShell` junta tudo num `<html>` com
 `.doc + .doc { page-break-before: always }`. Três coisas não podem ser quebradas:
 
@@ -284,8 +320,10 @@ cada documento produz só o corpo, e um `montarShell` junta tudo num `<html>` co
   deixado de ser pré-marcado. O formulário também barra antes de criar o orçamento —
   não existe tela para corrigir a seleção depois.
 
-Regressão verificada empiricamente: pacote de UM documento sai **pixel a pixel
-idêntico** ao de antes do refactor (6 páginas rasterizadas, PNGs iguais byte a byte).
+Regressão verificada empiricamente no refactor fragmento + shell: pacote de UM documento
+saiu **pixel a pixel idêntico** ao de antes (6 páginas rasterizadas, PNGs iguais byte a
+byte). A troca para Markdown (2026-10-07) muda o modelo do usuário de propósito — ganha
+parágrafos, quebras de linha e formatação — e deixa o TCLE padrão intocado.
 
 ## Cronograma de aplicações (folha de enfermagem)
 
