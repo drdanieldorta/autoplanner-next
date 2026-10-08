@@ -22,7 +22,11 @@ export const CONTRACT_VARIABLES = [
   { key: "{{profissional_cpf}}", label: "CPF do Profissional" },
   { key: "{{profissional_crm}}", label: "CRM do Profissional" },
   { key: "{{profissional_especialidade}}", label: "Especialidade" },
-  { key: "{{procedimentos}}", label: "Tabela de Procedimentos" },
+  {
+    key: "{{procedimentos}}",
+    label:
+      "Procedimentos — sozinha numa linha vira tabela; no meio de uma frase vira lista em texto",
+  },
   { key: "{{subtotal}}", label: "Valor Subtotal" },
   { key: "{{desconto}}", label: "Valor do Desconto" },
   { key: "{{total}}", label: "Valor Total" },

@@ -1,11 +1,14 @@
 import "server-only";
 
 import {
-  formatBRL,
-  formatCPF,
-  formatDateExtenso,
-  replaceContractVariables,
-} from "@/lib/contracts/render";
+  CUSTOM_DOC_CLASS,
+  CUSTOM_DOC_CSS,
+  montarShell,
+  renderCustomContract,
+  type Fragmento,
+  type ProcedimentoLinha,
+} from "@/lib/contracts/custom-doc";
+import { formatBRL, formatCPF, formatDateExtenso } from "@/lib/contracts/render";
 import {
   buildDefaultContractCss,
   renderDefaultSystemContract,
@@ -30,48 +33,12 @@ export type BuildContractResult =
   | { ok: true; value: BuiltContract }
   | { ok: false; error: string; status: number };
 
-type LineProc = { procedure_name?: string; quantity?: number };
-
-/** Um documento do pacote, antes de virar página do PDF. */
-type Fragmento = {
-  /** Classe do wrapper — também escopa o CSS deste tipo de documento. */
-  classe: string;
-  css: string;
-  body: string;
+type LineProc = {
+  procedure_name?: string;
+  quantity?: number;
+  value_cents?: number | null;
+  discount_percent?: number | null;
 };
-
-/**
- * Junta os fragmentos num `<html>` só.
- *
- * Por que um documento só: `createDocument` da Authentique recebe
- * `$file: Upload!` — SINGULAR. Uma assinatura para vários papéis só existe
- * concatenando os papéis num PDF. Isso é sorte, não limitação: tudo abaixo
- * do PDF (document_id, webhook, acervo, anexo no prontuário) segue 1:1.
- *
- * ⚠️ NÃO resetar a margem do `body`. Ela é a margem default do navegador
- * (8px) e sempre esteve valendo — zerá-la deslocaria ~2mm todo contrato já
- * emitido, e a garantia aqui é que um pacote de um documento só saia
- * idêntico ao de antes desta feature.
- */
-function montarShell(fragmentos: Fragmento[], brandingCss: string): string {
-  // Dedup por classe: três contratos custom compartilham uma regra só.
-  const cssPorClasse = new Map<string, string>();
-  for (const f of fragmentos) cssPorClasse.set(f.classe, f.css);
-
-  const css = [
-    // Quebra ANTES de cada documento exceto o primeiro. Com um documento
-    // só, não produz efeito nenhum.
-    ".doc + .doc { page-break-before: always; }",
-    brandingCss,
-    ...cssPorClasse.values(),
-  ].join("\n");
-
-  const corpo = fragmentos
-    .map((f) => `<div class="doc ${f.classe}">${f.body}</div>`)
-    .join("");
-
-  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Contrato</title><style>${css}</style></head><body>${corpo}</body></html>`;
-}
 
 /**
  * Monta o HTML dos documentos de uma proposta, num PDF só.
@@ -162,7 +129,7 @@ export async function buildContractsHtml(args: {
     if (!proposta.protocolo_id) return [];
     const r = await admin
       .from("protocol_items")
-      .select("procedure_name, quantity")
+      .select("procedure_name, quantity, value_cents, discount_percent")
       .eq("protocol_id", proposta.protocolo_id as string);
     if (r.error) return [];
     return (r.data ?? []) as LineProc[];
@@ -171,11 +138,35 @@ export async function buildContractsHtml(args: {
     ? (proposta.procedimentos_adicionais as LineProc[])
     : [];
   const todosProcedimentos = [...protocolItems, ...adicionais];
-  const procedimentosTexto = todosProcedimentos
-    .map((p) => `${p.procedure_name ?? "Procedimento"} (Qtd: ${p.quantity ?? 1})`)
-    .join(", ");
+  const procedimentos: ProcedimentoLinha[] = todosProcedimentos.map((p) => ({
+    nome: p.procedure_name ?? "Procedimento",
+    quantidade: p.quantity ?? 1,
+    valor_unit_cents: typeof p.value_cents === "number" ? p.value_cents : null,
+    desconto_percent: p.discount_percent ?? 0,
+  }));
 
+  // `valor_total_cents` é o valor FINAL do orçamento (depois do desconto
+  // global). O subtotal é a soma dos itens — a mesma conta do formulário de
+  // orçamento, desconto por item incluído. Antes, subtotal e total eram o
+  // mesmo número e o desconto saía fixo em R$ 0,00 em todo contrato.
   const valorTotal = (proposta.valor_total_cents as number) ?? 0;
+  const temValoresPorItem = procedimentos.some((p) => p.valor_unit_cents !== null);
+  const somaItens = procedimentos.reduce((acc, p) => {
+    if (p.valor_unit_cents === null) return acc;
+    return (
+      acc +
+      Math.round(p.quantidade * p.valor_unit_cents * (1 - p.desconto_percent / 100))
+    );
+  }, 0);
+  // Orçamento legado sem valor por item: não há como saber o subtotal, então
+  // ele é o total e o desconto é zero — exatamente o que sempre foi impresso.
+  const subtotal = temValoresPorItem ? Math.max(somaItens, valorTotal) : valorTotal;
+  const desconto = subtotal - valorTotal;
+  const descontoPercent = (proposta.discount_percent as number | null) ?? 0;
+  const descontoTexto =
+    desconto > 0 && descontoPercent > 0
+      ? `${formatBRL(desconto)} (${descontoPercent}%)`
+      : formatBRL(desconto);
   const installments = (proposta.installments as number | null) ?? null;
   const installmentValueCents =
     (proposta.installment_value_cents as number | null) ?? null;
@@ -240,9 +231,8 @@ export async function buildContractsHtml(args: {
     profissional_crm: (proposta.profissional_crm as string) ?? "",
     profissional_especialidade:
       (proposta.profissional_especialidade as string) ?? "",
-    procedimentos: procedimentosTexto || "—",
-    subtotal: formatBRL(valorTotal),
-    desconto: "R$ 0,00",
+    subtotal: formatBRL(subtotal),
+    desconto: descontoTexto,
     total: formatBRL(valorTotal),
     data_contrato: formatDateExtenso(),
     forma_pagamento: ((proposta.payment_method as string) ?? "—")
@@ -256,14 +246,17 @@ export async function buildContractsHtml(args: {
 
   const fragmentos: Fragmento[] = [];
 
-  // Modelos do usuário. O estilo do wrapper é o que antes estava no
-  // `<body style="...">` — mesmo offset, agora numa classe, porque o body
-  // é compartilhado por todos os documentos do pacote.
+  // Modelos do usuário: Markdown → HTML, variáveis preenchidas, com a tabela
+  // de procedimentos estruturada. Mesmo renderizador da prévia do editor.
   for (const contrato of contratos) {
     fragmentos.push({
-      classe: "doc-custom",
-      css: ".doc-custom { font-family: Arial, sans-serif; font-size: 12px; line-height: 1.55; color: #111; padding: 20mm; }",
-      body: `${renderBrandingHeader(branding)}${replaceContractVariables(contrato.content, variables)}`,
+      classe: CUSTOM_DOC_CLASS,
+      css: CUSTOM_DOC_CSS,
+      body: `${renderBrandingHeader(branding)}${renderCustomContract({
+        content: contrato.content,
+        variables,
+        procedimentos,
+      })}`,
     });
   }
 
@@ -280,7 +273,7 @@ export async function buildContractsHtml(args: {
         profissional_cpf: (proposta.profissional_cpf as string) ?? "",
         profissional_crm: (proposta.profissional_crm as string) ?? "",
         procedimentos: todosProcedimentos,
-        subtotal_cents: valorTotal,
+        subtotal_cents: subtotal,
         total_cents: valorTotal,
         forma_pagamento: (proposta.payment_method as string | null) ?? null,
         custom_payment_method:
