@@ -193,7 +193,7 @@ npm install --legacy-peer-deps
 - [x] **Fase 5.2: Camada clínica na criação do orçamento** — a grade clínica (via, dose, começa em, observações) passou a existir também em `/orcamentos/novo`, gravando no MESMO delta `prescricao_ajustes` que o editor de cronograma já usava, e nos avulsos gravando dentro de `procedimentos_adicionais`. `<ClinicalGrid>` + `<DuracaoInput>` compartilhados com o form de protocolo. Corrigidos 3 defeitos verificados: o `map` em `orcamentos/novo/page.tsx` descartava `id`/`via`/`dose`/`inicio_dias`/`cuidados`; `AjusteItemSchema` não aceitava `dose` (tornando dose por paciente inalcançável, e — com `salvarAjustes` fazendo replace — apagável); e a contagem "sem via" era falso positivo estrutural, acusando todo item de todo protocolo.
 - [x] **Fase 5.3: Vários documentos por plano, numa assinatura só** — `protocol_contracts` + `proposta_contracts` (join com `ordem`) e `incluir_tcle_padrao` em ambos. `buildContractHtml` virou `buildContractsHtml`, refatorada em fragmento + shell. `<DocumentosSelector>` compartilhado por protocolo e orçamento. Ver "Documentos do plano" abaixo.
 - [x] **Fase 5.4: Pacientes do CRM no orçamento (fallback sem Feegow)** — empresa sem `feegow_token` e com `crm_token` ganha um combobox que busca contatos etiquetados "Paciente" na Helena/WTS (`POST /contact/filter`, busca do servidor conforme digita via `GET /api/crm/pacientes?q=`). CPF e nascimento vêm de `customFields` quando a conta tem esses campos; o que não vier é digitado nos mesmos inputs do modo manual. CPF e telefone passaram a ser obrigatórios para paciente manual/CRM (form + `envio-manual`). Ver "Pacientes do CRM" abaixo.
-- [x] **Fase 5.5: Modelo de contrato em Markdown + prévia** — `contracts.content` passou a ser Markdown, renderizado por `lib/contracts/custom-doc.ts` (neutro, `marked`) tanto no PDF quanto na prévia ao vivo do editor (`<iframe sandbox srcDoc>`, dados fictícios, marca da empresa). `{{procedimentos}}` sozinha numa linha vira tabela com valores; `{{subtotal}}`/`{{desconto}}`/`{{total}}` passaram a refletir o desconto real do orçamento (antes desconto era fixo em R$ 0,00). Ver "Modelo do usuário é Markdown" abaixo.
+- [x] **Fase 5.5: Modelo de contrato em Markdown + prévia** — `contracts.content` passou a ser Markdown, renderizado por `lib/contracts/custom-doc.ts` (neutro, `marked`) tanto no PDF quanto na prévia ao vivo do editor (`<iframe sandbox srcDoc>`, dados fictícios, marca da empresa). `{{procedimentos}}` sozinha numa linha vira tabela (nome e quantidade, sem valor por item — decisão 2026-10-16); `{{subtotal}}`/`{{desconto}}`/`{{total}}` passaram a refletir o desconto real do orçamento (antes desconto era fixo em R$ 0,00). Ver "Modelo do usuário é Markdown" abaixo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
 
 ## Pacientes do CRM (fallback sem Feegow)
@@ -282,10 +282,11 @@ em Markdown saía com `#` e `**` impressos. Nenhum contrato em produção tinha 
 isso a troca foi feita sem coluna de formato. Regras:
 
 - **Ordem de substituição.** `{{procedimentos}}` é resolvida ANTES do parse, porque gera
-  Markdown: sozinha numa linha vira **tabela** (4 colunas com valor por item; 2 colunas
-  se o orçamento não tem valores); no meio de uma frase vira a lista em texto de sempre
-  ("Nome (Qtd: 2), ..."). As demais variáveis entram DEPOIS do parse, **escapadas como
-  HTML** — um `*` ou `|` num nome não pode mexer no layout.
+  Markdown: sozinha numa linha vira **tabela** de duas colunas (Procedimento e Qtd); no
+  meio de uma frase vira a lista em texto de sempre ("Nome (Qtd: 2), ..."). **Sem valor
+  por item** (decisão 2026-10-16): dinheiro só entra por `{{subtotal}}`, `{{desconto}}` e
+  `{{total}}`. As demais variáveis entram DEPOIS do parse, **escapadas como HTML** — um
+  `*` ou `|` num nome não pode mexer no layout.
 - **Linha só de `_` é assinatura, não régua.** Em Markdown, `___` sozinho é `<hr>`; os
   TCLEs legados usam "___________" acima de "Paciente:". `protegerLinhasDeAssinatura`
   escapa esses traços antes do parse.
