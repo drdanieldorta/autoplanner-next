@@ -138,11 +138,11 @@ export async function buildContractsHtml(args: {
     ? (proposta.procedimentos_adicionais as LineProc[])
     : [];
   const todosProcedimentos = [...protocolItems, ...adicionais];
+  // Só nome e quantidade: o contrato não imprime valor por item (decisão
+  // 2026-10-16); dinheiro entra por `{{subtotal}}`/`{{desconto}}`/`{{total}}`.
   const procedimentos: ProcedimentoLinha[] = todosProcedimentos.map((p) => ({
     nome: p.procedure_name ?? "Procedimento",
     quantidade: p.quantity ?? 1,
-    valor_unit_cents: typeof p.value_cents === "number" ? p.value_cents : null,
-    desconto_percent: p.discount_percent ?? 0,
   }));
 
   // `valor_total_cents` é o valor FINAL do orçamento (depois do desconto
@@ -150,14 +150,18 @@ export async function buildContractsHtml(args: {
   // orçamento, desconto por item incluído. Antes, subtotal e total eram o
   // mesmo número e o desconto saía fixo em R$ 0,00 em todo contrato.
   const valorTotal = (proposta.valor_total_cents as number) ?? 0;
-  const temValoresPorItem = procedimentos.some((p) => p.valor_unit_cents !== null);
-  const somaItens = procedimentos.reduce((acc, p) => {
-    if (p.valor_unit_cents === null) return acc;
-    return (
+  const comValor = todosProcedimentos.filter(
+    (p): p is LineProc & { value_cents: number } => typeof p.value_cents === "number",
+  );
+  const temValoresPorItem = comValor.length > 0;
+  const somaItens = comValor.reduce(
+    (acc, p) =>
       acc +
-      Math.round(p.quantidade * p.valor_unit_cents * (1 - p.desconto_percent / 100))
-    );
-  }, 0);
+      Math.round(
+        (p.quantity ?? 1) * p.value_cents * (1 - (p.discount_percent ?? 0) / 100),
+      ),
+    0,
+  );
   // Orçamento legado sem valor por item: não há como saber o subtotal, então
   // ele é o total e o desconto é zero — exatamente o que sempre foi impresso.
   const subtotal = temValoresPorItem ? Math.max(somaItens, valorTotal) : valorTotal;

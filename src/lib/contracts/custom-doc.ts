@@ -91,12 +91,14 @@ export const CUSTOM_DOC_CSS = [
   ".doc-custom hr { border: 0; border-top: 1px solid #999; margin: 14px 0; }",
 ].join("\n");
 
+/**
+ * Linha de `{{procedimentos}}`. Só nome e quantidade, de propósito (decisão
+ * 2026-10-16): o valor por item NÃO aparece no contrato — dinheiro entra só
+ * por `{{subtotal}}`, `{{desconto}}` e `{{total}}`.
+ */
 export type ProcedimentoLinha = {
   nome: string;
   quantidade: number;
-  /** Centavos. `null` quando o item não tem valor (orçamento legado). */
-  valor_unit_cents: number | null;
-  desconto_percent: number;
 };
 
 export type CustomContractInput = {
@@ -138,37 +140,19 @@ function protegerLinhasDeAssinatura(md: string): string {
   );
 }
 
-function valorLinha(p: ProcedimentoLinha): number | null {
-  if (p.valor_unit_cents === null) return null;
-  return Math.round(p.quantidade * p.valor_unit_cents * (1 - (p.desconto_percent || 0) / 100));
-}
-
 /**
  * `{{procedimentos}}` sozinho numa linha vira uma tabela Markdown — assim
  * ela recebe o mesmo estilo que as tabelas que o usuário escreve no modelo.
- * Com valor por item, quatro colunas; num orçamento sem valores, só nome e
- * quantidade (o mesmo que o TCLE padrão mostra).
+ * Duas colunas, nome e quantidade (o mesmo que o TCLE padrão mostra); valores
+ * ficam fora da tabela por decisão, não por falta de dado.
  */
 function tabelaProcedimentos(procs: ProcedimentoLinha[]): string {
   if (procs.length === 0) return "—";
-  const comValores = procs.some((p) => p.valor_unit_cents !== null);
   const cel = (s: string) => escapeMarkdownInline(s);
-  if (!comValores) {
-    return [
-      "| Procedimento | Qtd |",
-      "| :--- | ---: |",
-      ...procs.map((p) => `| ${cel(p.nome)} | ${p.quantidade} |`),
-    ].join("\n");
-  }
-  const linhas = procs.map((p) => {
-    const unit = p.valor_unit_cents === null ? "—" : formatCurrency(p.valor_unit_cents);
-    const sub = valorLinha(p);
-    return `| ${cel(p.nome)} | ${p.quantidade} | ${unit} | ${sub === null ? "—" : formatCurrency(sub)} |`;
-  });
   return [
-    "| Procedimento | Qtd | Valor unitário | Subtotal |",
-    "| :--- | ---: | ---: | ---: |",
-    ...linhas,
+    "| Procedimento | Qtd |",
+    "| :--- | ---: |",
+    ...procs.map((p) => `| ${cel(p.nome)} | ${p.quantidade} |`),
   ].join("\n");
 }
 
@@ -222,9 +206,9 @@ function dataExtensoHoje(): string {
 }
 
 /**
- * Dados fictícios para a prévia do editor. Coerentes entre si (2 × 1.500 +
- * 3 × 200 = 3.600; 10% de desconto = 3.240) para a tabela de procedimentos
- * e o quadro de valores baterem.
+ * Dados fictícios para a prévia do editor. Coerentes entre si (subtotal
+ * 3.600; 10% de desconto = 3.240; 3 parcelas de 1.080) para o quadro de
+ * valores bater.
  */
 export function previewSample(): {
   variables: Record<string, string>;
@@ -257,8 +241,8 @@ export function previewSample(): {
       valor_parcela: formatCurrency(108000),
     },
     procedimentos: [
-      { nome: "Toxina botulínica (face completa)", quantidade: 2, valor_unit_cents: 150000, desconto_percent: 0 },
-      { nome: "Laser fracionado", quantidade: 3, valor_unit_cents: 20000, desconto_percent: 0 },
+      { nome: "Toxina botulínica (face completa)", quantidade: 2 },
+      { nome: "Laser fracionado", quantidade: 3 },
     ],
   };
 }
