@@ -389,6 +389,51 @@ saiu **pixel a pixel idêntico** ao de antes (6 páginas rasterizadas, PNGs igua
 byte). A troca para Markdown (2026-10-07) muda o modelo do usuário de propósito — ganha
 parágrafos, quebras de linha e formatação — e deixa o TCLE padrão intocado.
 
+## Webhook da Autentique (assinatura)
+
+`POST /api/webhooks/authentique` é o que carimba `propostas.contract_signed_at` e
+anexa o contrato assinado ao prontuário Feegow. Até 2026-10-22 nunca carimbou nada:
+193 contratos enviados e zero assinaturas registradas, porque a rota lia um formato de
+payload que a Autentique não manda, as contas das clínicas ainda apontavam para o n8n
+e o middleware respondia **307 para `/login-employee`** a todo POST sem cookie, inclusive
+o da Autentique. `/api/webhooks/*` agora é rota pública em
+[supabase/middleware.ts](src/lib/supabase/middleware.ts); cada rota ali se autentica
+sozinha. Verificado contra o build de produção (`next start`).
+
+**Formato real do payload** (parser puro em
+[authentique-webhook.ts](src/lib/integrations/authentique-webhook.ts), neutro):
+`{ event: { id, type, data } }`, com o recurso em `event.data.object` quando é objeto,
+senão no próprio `event.data` (a Autentique manda os dois; no segundo, `object` é a
+string `"document"`/`"signature"`). Em `signature.*` o recurso é a assinatura e o id do
+documento está em `document`; em `document.*` o recurso é o documento e o id está em
+`id`. O formato antigo `event.data.document` segue aceito. Header de HMAC:
+`X-Autentique-Signature`.
+
+**Respostas.** A Autentique manda vários tipos de evento para a mesma URL: tipo fora de
+`signature.accepted`/`document.finished`/`signed`, evento sem id de documento e
+documento que não é nosso (a conta é dividida com outros sistemas) respondem **200
+`ignored`**, antes de tocar no banco. 4xx só para JSON inválido e HMAC errado; 503 quando
+não dá para confirmar, para ela reenviar.
+
+**O evento é gatilho, não prova.** Nenhuma empresa tem `webhook_secret`, então o HMAC
+(opcional) hoje não roda. Antes de carimbar, a rota confirma na API
+(`getDocumentInfo`): só carimba com `status === "signed"`, isto é, TODOS os signatários
+assinaram. Sem isso, quem soubesse um id de documento marcaria o contrato como assinado
+e dispararia um anexo irreversível na Feegow. Empresa sem `authentique_token` → 200
+`ignored`; consulta falhou (`status: null`) → 503.
+
+**Carimbo idempotente, anexo único.** O `update` só grava se `contract_signed_at` for
+nulo (com o `signedAt` da Autentique) e usa `.select("id")` para saber se foi ESTA
+requisição que carimbou. O anexo na Feegow só roda nela: `signature.accepted` e
+`document.finished` chegam para o mesmo documento, e a Feegow não expõe delete de anexo.
+
+**A URL fica em `/configuracao`** (card "Webhook da Autentique", com passo a passo e a
+data da última assinatura recebida, que serve de sinal de vida). Domínio:
+`VERCEL_PROJECT_PRODUCTION_URL` ou, fora da Vercel, os headers da requisição
+([app-url.ts](src/lib/app-url.ts)). **Cada clínica precisa cadastrar a URL na própria
+conta da Autentique** (formato JSON, os dois eventos) e remover ou trocar o webhook antigo
+do n8n. Enquanto ele existir, as assinaturas continuam indo para lá.
+
 ## Cronograma de aplicações (folha de enfermagem)
 
 Segundo documento do sistema, ao lado do contrato. **Derivado, não escrito**:

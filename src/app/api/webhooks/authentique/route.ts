@@ -4,6 +4,10 @@ import {
   authentique,
   verifyAuthentiqueSignature,
 } from "@/lib/integrations/authentique";
+import {
+  AUTENTIQUE_SIGNED_EVENT_TYPES,
+  parseAutentiqueEvent,
+} from "@/lib/integrations/authentique-webhook";
 import { feegow } from "@/lib/integrations/feegow";
 import {
   getCompanyCredentials,
@@ -14,30 +18,51 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const dynamic = "force-dynamic";
 
 /**
- * Callback inbound da Authentique quando um documento muda de status.
+ * Callback inbound da Autentique (o código chama de "Authentique") quando um
+ * documento muda de status. A URL é mostrada em /configuracao; cada clínica
+ * cadastra na própria conta da Autentique.
  *
  * Substitui o webhook n8n `POST /webhook/contrato-assinando`.
  *
- * Diferenças do n8n original:
- *   - Valida HMAC `x-autentique-signature` (n8n não validava — bug 7 do N8N.md)
- *   - Não tem o `)` extra no template do upload (bug 2)
- *   - Idempotência via dedup do `event.id` no DB (TODO simples — já podemos
- *     tratar no banco com ON CONFLICT em proposal_events.id)
+ * **Payload real** (lido por `parseAutentiqueEvent`):
+ *   `{ event: { id, type, data } }`, com o recurso em `event.data.object`
+ *   quando é objeto, senão no próprio `event.data`.
+ *     - `signature.accepted`: recurso é a assinatura → `document` = id do documento
+ *     - `document.finished`:  recurso é o documento  → `id` = id do documento
+ *   O formato antigo `event.data.document` continua aceito.
  *
- * O secret HMAC é compartilhado entre o painel e a Authentique. Por
- * enquanto, lemos da empresa via `getCompanyCredentials(companyId).webhook_secret`,
- * o que exige resolver a empresa pelo `document_id` ANTES de validar.
- * Não é ideal — mas é o melhor possível enquanto não tivermos um secret
- * global de webhook Authentique no .env. Comentários abaixo.
+ * **Respostas.** A Autentique manda muitos tipos de evento para a mesma URL;
+ * responder 4xx para os que não interessam está errado. Por isso: JSON
+ * inválido → 400; tipo que não interessa, sem id de documento ou documento
+ * que não é nosso (a conta é dividida com outros sistemas) → 200 `ignored`.
+ * 503 só quando a consulta à Autentique falha, para ela reenviar.
+ *
+ * **O evento é gatilho, não prova.** Antes de carimbar, a rota confirma na
+ * API da Autentique (`getDocumentInfo`) que TODOS os signatários assinaram.
+ * Nenhuma empresa tem `webhook_secret` cadastrado, então o HMAC (opcional,
+ * header `X-Autentique-Signature`) hoje não roda: sem a confirmação ao vivo,
+ * quem soubesse um id de documento marcaria o contrato como assinado e
+ * dispararia um anexo irreversível no prontuário Feegow.
+ *
+ * **Carimbo idempotente, anexo único.** `contract_signed_at` só é gravado se
+ * ainda estiver nulo, e o anexo na Feegow só roda na requisição que
+ * efetivamente carimbou. `signature.accepted` e `document.finished` chegam
+ * para o mesmo documento, e a Feegow não expõe delete de anexo.
+ *
+ * O secret HMAC é por empresa (`api_credentials.webhook_secret`), o que
+ * exige resolver a empresa pelo `document_id` ANTES de validar. A rota é
+ * pública no middleware (`/api/webhooks/*`): a Autentique não manda cookie.
+ *
+ * Diferenças do n8n original:
+ *   - Valida HMAC `x-autentique-signature` quando há secret (bug 7 do N8N.md)
+ *   - Não tem o `)` extra no template do upload (bug 2)
  */
 export async function POST(req: Request) {
   // Lemos o body como string (texto) para validar HMAC depois
   const rawBody = await req.text();
   const signature = req.headers.get("x-autentique-signature");
 
-  let payload: {
-    event?: { type?: string; data?: { document?: string } };
-  };
+  let payload: unknown;
   try {
     payload = JSON.parse(rawBody);
   } catch {
@@ -47,20 +72,29 @@ export async function POST(req: Request) {
     );
   }
 
-  const eventType = payload.event?.type;
-  const documentId = payload.event?.data?.document;
+  // Filtra ANTES de tocar no banco: a maioria dos eventos não interessa.
+  const { type: eventType, documentId } = parseAutentiqueEvent(payload);
+  if (!eventType || !AUTENTIQUE_SIGNED_EVENT_TYPES.has(eventType)) {
+    return NextResponse.json({
+      ok: true,
+      ignored: `evento não tratado: ${eventType ?? "sem tipo"}`,
+    });
+  }
   if (!documentId) {
-    return NextResponse.json(
-      { error: "event.data.document ausente" },
-      { status: 400 },
-    );
+    return NextResponse.json({
+      ok: true,
+      ignored: "evento sem id de documento",
+    });
   }
 
   // Resolve empresa via document_id (criação prévia salvou em propostas)
   const proposta = await getPropostaByDocumentId(documentId);
   if (!proposta) {
-    // Pode acontecer se Authentique repetir callback antigo. Aceita silenciosamente.
-    return NextResponse.json({ ok: true, ignored: true });
+    // Documento de outro sistema na mesma conta, ou callback antigo.
+    return NextResponse.json({
+      ok: true,
+      ignored: "documento desconhecido",
+    });
   }
 
   const creds = await getCompanyCredentials(proposta.company_id);
@@ -86,9 +120,34 @@ export async function POST(req: Request) {
     }
   }
 
-  // Só processa quando o documento foi assinado
-  if (eventType !== "signature.accepted" && eventType !== "signed") {
-    return NextResponse.json({ ok: true, ignored: eventType });
+  // Confirmação ao vivo: sem token não há como confirmar, e sem confirmar
+  // não carimbamos.
+  if (!creds.authentique_token) {
+    console.warn(
+      "[/webhooks/authentique] Empresa sem token da Autentique; evento ignorado:",
+      { companyId: proposta.company_id, documentId, eventType },
+    );
+    return NextResponse.json({
+      ok: true,
+      ignored: "empresa sem token da Autentique",
+    });
+  }
+  const info = await authentique(creds.authentique_token).getDocumentInfo(
+    documentId,
+  );
+  if (info.status === null) {
+    // A consulta falhou: 503 faz a Autentique reenviar o evento.
+    return NextResponse.json(
+      { error: "Não foi possível confirmar a assinatura na Autentique" },
+      { status: 503 },
+    );
+  }
+  if (info.status !== "signed") {
+    // `signature.accepted` de um signatário quando ainda falta outro.
+    return NextResponse.json({
+      ok: true,
+      ignored: "documento ainda não assinado",
+    });
   }
 
   // Carimba a assinatura ANTES de qualquer coisa que possa falhar: o
@@ -96,31 +155,47 @@ export async function POST(req: Request) {
   // é definitivo neste ponto. Se a ordem fosse inversa, uma Feegow fora
   // do ar deixaria o painel sem saber que o contrato foi assinado.
   //
-  // `.is(null)` mantém idempotente: a Authentique pode repetir o
-  // callback, e queremos preservar o instante da primeira assinatura.
-  try {
-    await createAdminClient()
-      .from("propostas")
-      .update({ contract_signed_at: new Date().toISOString() } as never)
-      .eq("document_id", documentId)
-      .is("contract_signed_at", null);
-  } catch (err) {
-    // Não falha o webhook: a Authentique reenviaria o evento e o painel
-    // ainda consegue descobrir o status consultando a API ao vivo.
+  // `.is(null)` mantém idempotente: a Autentique repete o callback e manda
+  // `signature.accepted` e `document.finished` para o mesmo documento. O
+  // `.select("id")` diz se foi ESTA requisição que carimbou.
+  const stamp = await createAdminClient()
+    .from("propostas")
+    .update({
+      contract_signed_at: info.signedAt ?? new Date().toISOString(),
+    } as never)
+    .eq("document_id", documentId)
+    .is("contract_signed_at", null)
+    .select("id");
+  if (stamp.error) {
+    // 503 para a Autentique reenviar; o anexo abaixo depende do carimbo.
     console.error(
       "[/webhooks/authentique] Falha ao carimbar contract_signed_at:",
-      err,
+      stamp.error,
+    );
+    return NextResponse.json(
+      { error: "Falha ao registrar a assinatura" },
+      { status: 503 },
     );
   }
+  const carimbouAgora = ((stamp.data ?? []) as { id: string }[]).length > 0;
 
   // Se a empresa tem feegow_token, baixa o PDF assinado e anexa ao prontuário.
   // Só quando o paciente é da Feegow: orçamento com paciente digitado ou do
   // CRM grava `paciente_id: "manual"` e não tem prontuário — o que acontece
   // em empresa COM Feegow quando, em Configurações, a origem dos pacientes é
   // CRM ou manual.
+  //
+  // Só na requisição que carimbou agora: a Feegow não expõe delete nem
+  // replace de anexo, e o segundo evento do mesmo documento anexaria o PDF
+  // de novo.
   const temProntuario =
     !!proposta.paciente_id && proposta.paciente_id !== "manual";
-  if (creds.feegow_token && creds.authentique_token && temProntuario) {
+  if (
+    carimbouAgora &&
+    creds.feegow_token &&
+    creds.authentique_token &&
+    temProntuario
+  ) {
     try {
       const signedUrl = await authentique(
         creds.authentique_token,
@@ -138,7 +213,7 @@ export async function POST(req: Request) {
         }
       }
     } catch (err) {
-      // Loga mas não falha — o evento Authentique já foi processado.
+      // Loga mas não falha — a assinatura já foi registrada.
       console.error(
         "[/webhooks/authentique] Falha ao anexar PDF Feegow:",
         err,
@@ -146,5 +221,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, stamped: carimbouAgora });
 }
