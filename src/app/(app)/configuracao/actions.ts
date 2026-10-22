@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { requireUser } from "@/lib/auth";
+import { PATIENT_SOURCES } from "@/lib/orcamento/patient-source";
 import { createClient } from "@/lib/supabase/server";
 import { BRANDING_BUCKET } from "@/lib/branding/document";
 import { normalizeHex } from "@/lib/branding/palette";
@@ -109,6 +110,72 @@ export async function updateCredentials(
 
   if (upsert.error) {
     return { ok: false, error: upsert.error.message };
+  }
+
+  revalidatePath("/configuracao");
+  return { ok: true };
+}
+
+// ───────── Origem dos pacientes no orçamento ─────────
+
+export type UpdatePatientSourceState =
+  | { ok: true }
+  | { ok: false; error: string }
+  | null;
+
+/**
+ * Salva de onde o formulário de orçamento puxa o paciente (Feegow, CRM ou
+ * manual). Ver `lib/orcamento/patient-source.ts` para as regras de queda
+ * quando falta a chave da origem escolhida.
+ *
+ * Form separado do de tokens: lá, campo vazio significa "manter o que
+ * está", e "nada para salvar" é erro. Aqui sempre há um valor.
+ */
+export async function updatePatientSource(
+  _prev: UpdatePatientSourceState,
+  formData: FormData,
+): Promise<UpdatePatientSourceState> {
+  const user = await requireUser();
+  if (!user.isAdmin)
+    return { ok: false, error: "Acesso restrito a administradores." };
+  if (!user.companyId)
+    return { ok: false, error: "Sua conta não está associada a uma empresa." };
+
+  const parsed = z.enum(PATIENT_SOURCES).safeParse(formData.get("patientSource"));
+  if (!parsed.success) return { ok: false, error: "Opção inválida." };
+
+  const supabase = await createClient();
+
+  const existingResult = await supabase
+    .from("api_credentials")
+    .select("id")
+    .eq("company_id", user.companyId)
+    .maybeSingle();
+  if (existingResult.error && existingResult.error.code !== "PGRST116") {
+    return { ok: false, error: existingResult.error.message };
+  }
+
+  // Empresa sem nenhuma chave ainda não tem linha em `api_credentials`.
+  // `.select("id")` nos dois caminhos: um UPDATE barrado pela RLS não dá
+  // erro, só afeta zero linhas — sem conferir, a tela diria "salvo".
+  const result = existingResult.data
+    ? await supabase
+        .from("api_credentials")
+        .update({ patient_source: parsed.data } as never)
+        .eq("company_id", user.companyId)
+        .select("id")
+    : await supabase
+        .from("api_credentials")
+        .insert({
+          user_id: user.id,
+          company_id: user.companyId,
+          patient_source: parsed.data,
+        } as never)
+        .select("id");
+
+  if (result.error) return { ok: false, error: result.error.message };
+  if (!result.data || result.data.length === 0) {
+    return { ok: false, error: "Não foi possível salvar a preferência." };
   }
 
   revalidatePath("/configuracao");

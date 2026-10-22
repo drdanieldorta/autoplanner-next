@@ -100,9 +100,16 @@ type Body = z.infer<typeof BodySchema>;
  *   - n8n `POST /webhook/create-proposta` (modo automático)
  *   - n8n `POST /webhook/modo-manual-autentique` (modo manual)
  *
- * Comportamento determinado pelas credenciais da empresa:
- *   - Tem `feegow_token` → modo automático (cria na Feegow + Authentique)
- *   - Sem `feegow_token` → modo manual (salva local; Authentique opcional)
+ * Modo automático (cria a proposta na Feegow antes de salvar) exige as
+ * duas coisas: a empresa ter `feegow_token` E o orçamento trazer um
+ * paciente da Feegow. Sem paciente da Feegow não há proposta possível lá —
+ * é o caso de empresa sem Feegow e também de empresa com Feegow que, em
+ * Configurações, escolheu puxar o paciente do CRM ou digitá-lo. O
+ * formulário manda `paciente_id: "manual"` nesses casos.
+ *
+ * Decide pelo payload, não pela preferência salva: o formulário resolveu a
+ * origem ao abrir, e trocar a opção com um formulário aberto não pode fazer
+ * a rota tentar criar na Feegow um paciente que não é de lá.
  *
  * Em ambos os modos, salva em `propostas` ANTES de retornar e dispara
  * a criação do Authentique em background (Vercel `waitUntil` quando
@@ -123,7 +130,9 @@ export async function POST(req: Request) {
   }
 
   const creds = await getCompanyCredentials(auth.user.companyId);
-  const hasFeegow = !!creds?.feegow_token;
+  const pacienteDaFeegow =
+    body.paciente_id.trim() !== "" && body.paciente_id !== "manual";
+  const hasFeegow = !!creds?.feegow_token && pacienteDaFeegow;
   const hasAuthentique = !!creds?.authentique_token;
 
   const admin = createAdminClient();

@@ -14,6 +14,11 @@ import {
   type HelenaContact,
 } from "@/lib/integrations/helena";
 import { CRM_PATIENT_TAG, crmPhoneToDisplay } from "@/lib/crm/contacts";
+import {
+  parsePatientSource,
+  resolvePatientSource,
+  type PatientSource,
+} from "@/lib/orcamento/patient-source";
 import { listFuncionarios } from "@/lib/services/funcionarios";
 
 export type OrcamentoProcedureOption = {
@@ -48,10 +53,20 @@ export type OrcamentoProfessionalOption = {
 };
 
 export type OrcamentoFormData = {
+  /**
+   * A empresa tem chave da Feegow: procedimentos e profissionais vêm de lá,
+   * seja qual for a origem do paciente.
+   */
   hasFeegow: boolean;
   /**
-   * Sem Feegow, com `crm_token` e o CRM respondendo: o dropdown de paciente
-   * busca contatos etiquetados "Paciente" no CRM. `patients` traz a primeira
+   * De onde vem o paciente neste formulário: a preferência da empresa
+   * (Configurações) já resolvida contra as chaves configuradas. Só com
+   * `"feegow"` o orçamento vira proposta na Feegow.
+   */
+  patientSource: PatientSource;
+  /**
+   * Origem `"crm"` e o CRM respondendo: o dropdown de paciente busca
+   * contatos etiquetados "Paciente" no CRM. `patients` traz a primeira
    * página; a busca conforme digita vai a `GET /api/crm/pacientes`.
    */
   hasCrm: boolean;
@@ -101,53 +116,116 @@ export async function searchCrmPatients(
   };
 }
 
+function feegowErrorMessage(reason: unknown, fallback: string): string {
+  return reason instanceof FeegowError ? reason.message : fallback;
+}
+
 /**
- * Carrega os dados auxiliares para o form de Orçamento com base no
- * modo da empresa.
+ * Procedimentos e profissionais da Feegow e, só quando o paciente vem de
+ * lá, a lista de pacientes — a chamada mais pesada das três, que não
+ * precisa acontecer quando a origem é o CRM ou manual.
+ */
+async function loadFeegowData(
+  token: string,
+  withPatients: boolean,
+): Promise<{
+  procedures: FeegowProcedure[];
+  patients: FeegowPatient[];
+  professionals: FeegowProfessional[];
+  errors: string[];
+}> {
+  const client = feegow(token);
+  const [procedures, patients, professionals] = await Promise.allSettled([
+    client.listProcedures(),
+    withPatients ? client.listPatients() : Promise.resolve([]),
+    client.listProfessionals(),
+  ]);
+  const errors: string[] = [];
+  const valueOr = <T,>(r: PromiseSettledResult<T[]>, fallback: string): T[] => {
+    if (r.status === "fulfilled") return r.value;
+    errors.push(feegowErrorMessage(r.reason, fallback));
+    return [];
+  };
+  return {
+    procedures: valueOr(procedures, "Falha ao carregar procedimentos"),
+    patients: valueOr(patients, "Falha ao carregar pacientes"),
+    professionals: valueOr(professionals, "Falha ao carregar profissionais"),
+    errors,
+  };
+}
+
+/**
+ * Carrega os dados auxiliares para o form de Orçamento.
  *
- * - Modo automático (Feegow configurado): puxa procedimentos/pacientes/
- *   profissionais da API Feegow via factory server-side.
- * - Modo manual (sem Feegow): procedimentos vazios (digitados na hora),
- *   profissionais vêm de profiles. Pacientes: se a empresa tem `crm_token`,
- *   a primeira página dos contatos "Paciente" do CRM; senão vazios
- *   (digitados na hora). Falha do CRM não derruba a página — vira
- *   `crmError`, e o form volta a ser o manual de sempre.
+ * Duas decisões independentes:
  *
- * Erros de Feegow são reportados via `feegowError` em vez de jogar —
- * o user ainda consegue ver o form (mesmo que sem dados externos)
- * e a página decide como exibir o aviso.
+ * - **Catálogo** (procedimentos e profissionais): da Feegow quando a
+ *   empresa tem a chave; senão procedimentos são digitados na hora e
+ *   profissionais vêm de profiles.
+ * - **Paciente**: a origem escolhida em Configurações, resolvida contra as
+ *   chaves (`resolvePatientSource`). Feegow → lista de pacientes da Feegow;
+ *   CRM → primeira página dos contatos "Paciente"; manual → nada.
+ *
+ * Falhas não derrubam a página: Feegow vira `feegowError`, CRM vira
+ * `crmError` (e o formulário volta a ser o manual de sempre).
  */
 export async function loadOrcamentoFormData(
   companyId: string,
 ): Promise<OrcamentoFormData> {
   const creds = await getCompanyCredentials(companyId);
-  const hasFeegow = !!creds?.feegow_token;
+  const feegowToken = creds?.feegow_token || null;
+  const crmToken = creds?.crm_token || null;
+  const hasFeegow = !!feegowToken;
+  const patientSource = resolvePatientSource(
+    parsePatientSource(creds?.patient_source),
+    { hasFeegow, hasCrm: !!crmToken },
+  );
 
-  if (!hasFeegow) {
-    const crmToken = creds?.crm_token ?? null;
-    const [funcionarios, crm] = await Promise.all([
-      listFuncionarios({ companyId }),
-      crmToken
-        ? searchCrmPatients(crmToken, "").then(
-            (page) => ({ ok: true as const, page }),
-            (err: unknown) => ({
-              ok: false as const,
-              error:
-                err instanceof HelenaError
-                  ? err.message
-                  : "Falha ao consultar o CRM",
-            }),
-          )
-        : Promise.resolve(null),
-    ]);
-    return {
-      hasFeegow: false,
-      hasCrm: crm?.ok === true,
-      crmError: crm && !crm.ok ? crm.error : null,
-      crmHasMore: crm?.ok === true ? crm.page.hasMore : false,
-      procedures: [],
-      patients: crm?.ok === true ? crm.page.items : [],
-      professionals: funcionarios.map((f) => ({
+  const [feegowData, crm, funcionarios] = await Promise.all([
+    feegowToken
+      ? loadFeegowData(feegowToken, patientSource === "feegow")
+      : Promise.resolve(null),
+    patientSource === "crm" && crmToken
+      ? searchCrmPatients(crmToken, "").then(
+          (page) => ({ ok: true as const, page }),
+          (err: unknown) => ({
+            ok: false as const,
+            error:
+              err instanceof HelenaError
+                ? err.message
+                : "Falha ao consultar o CRM",
+          }),
+        )
+      : Promise.resolve(null),
+    feegowToken ? Promise.resolve(null) : listFuncionarios({ companyId }),
+  ]);
+
+  const patients: OrcamentoPatientOption[] =
+    patientSource === "feegow"
+      ? (feegowData?.patients ?? []).map((p) => ({
+          id: p.paciente_id,
+          name: p.nome,
+          email: p.email,
+          phone: p.celular,
+          birth: p.nascimento,
+          neighborhood: p.bairro,
+          cpf: "",
+        }))
+      : crm?.ok === true
+        ? crm.page.items
+        : [];
+
+  const professionals: OrcamentoProfessionalOption[] = feegowData
+    ? feegowData.professionals.map((p) => ({
+        id: p.profissional_id,
+        name: p.nome,
+        email: p.email,
+        cpf: p.cpf,
+        crm: p.crm,
+        specialization: p.especialidade,
+        sys_user: p.sys_user,
+      }))
+    : (funcionarios ?? []).map((f) => ({
         id: f.id,
         name: f.name ?? f.email ?? "",
         email: f.email ?? "",
@@ -155,76 +233,25 @@ export async function loadOrcamentoFormData(
         crm: "",
         specialization: f.role ?? "",
         sys_user: "",
-      })),
-      feegowError: null,
-    };
-  }
-
-  const client = feegow(creds!.feegow_token!);
-  const results = await Promise.allSettled([
-    client.listProcedures(),
-    client.listPatients(),
-    client.listProfessionals(),
-  ]);
-
-  const errors: string[] = [];
-  const proceduresRaw =
-    results[0].status === "fulfilled"
-      ? (results[0].value as FeegowProcedure[])
-      : (errors.push(
-          results[0].reason instanceof FeegowError
-            ? results[0].reason.message
-            : "Falha ao carregar procedimentos",
-        ),
-        []);
-  const patientsRaw =
-    results[1].status === "fulfilled"
-      ? (results[1].value as FeegowPatient[])
-      : (errors.push(
-          results[1].reason instanceof FeegowError
-            ? results[1].reason.message
-            : "Falha ao carregar pacientes",
-        ),
-        []);
-  const professionalsRaw =
-    results[2].status === "fulfilled"
-      ? (results[2].value as FeegowProfessional[])
-      : (errors.push(
-          results[2].reason instanceof FeegowError
-            ? results[2].reason.message
-            : "Falha ao carregar profissionais",
-        ),
-        []);
+      }));
 
   return {
-    hasFeegow: true,
-    hasCrm: false,
-    crmError: null,
-    crmHasMore: false,
-    procedures: proceduresRaw.map((p) => ({
+    hasFeegow,
+    patientSource,
+    hasCrm: crm?.ok === true,
+    crmError: crm && !crm.ok ? crm.error : null,
+    crmHasMore: crm?.ok === true ? crm.page.hasMore : false,
+    procedures: (feegowData?.procedures ?? []).map((p) => ({
       id: p.procedimento_id,
       name: p.nome,
       value_cents: Math.round(p.valor),
       duration: p.tempo,
     })),
-    patients: patientsRaw.map((p) => ({
-      id: p.paciente_id,
-      name: p.nome,
-      email: p.email,
-      phone: p.celular,
-      birth: p.nascimento,
-      neighborhood: p.bairro,
-      cpf: "",
-    })),
-    professionals: professionalsRaw.map((p) => ({
-      id: p.profissional_id,
-      name: p.nome,
-      email: p.email,
-      cpf: p.cpf,
-      crm: p.crm,
-      specialization: p.especialidade,
-      sys_user: p.sys_user,
-    })),
-    feegowError: errors.length > 0 ? errors.join(" · ") : null,
+    patients,
+    professionals,
+    feegowError:
+      feegowData && feegowData.errors.length > 0
+        ? feegowData.errors.join(" · ")
+        : null,
   };
 }

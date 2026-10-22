@@ -113,8 +113,14 @@ export async function POST(req: Request) {
     );
   }
 
-  // Se a empresa tem feegow_token, baixa o PDF assinado e anexa ao prontuário
-  if (creds.feegow_token && creds.authentique_token) {
+  // Se a empresa tem feegow_token, baixa o PDF assinado e anexa ao prontuário.
+  // Só quando o paciente é da Feegow: orçamento com paciente digitado ou do
+  // CRM grava `paciente_id: "manual"` e não tem prontuário — o que acontece
+  // em empresa COM Feegow quando, em Configurações, a origem dos pacientes é
+  // CRM ou manual.
+  const temProntuario =
+    !!proposta.paciente_id && proposta.paciente_id !== "manual";
+  if (creds.feegow_token && creds.authentique_token && temProntuario) {
     try {
       const signedUrl = await authentique(
         creds.authentique_token,
