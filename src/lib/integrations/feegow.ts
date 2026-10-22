@@ -191,25 +191,55 @@ export function feegow(token: string) {
     },
 
     /** Lista pacientes. ⚠️ Hard-cap de 1500 pelo n8n original — ver N8N.md ficha 3. */
-    async listPatients(opts: { limit?: number } = {}): Promise<FeegowPatient[]> {
-      const limit = opts.limit ?? 1500;
-      const raw = await fetcher<unknown>(`/patient/list?limit=${limit}`);
-      const list = unwrapList(raw);
-      return list
-        .map((item) => PatientListItemSchema.safeParse(item))
-        .filter((r) => r.success)
-        .map((r) => r.data)
-        .sort((a, b) =>
-          (a.nome ?? "").localeCompare(b.nome ?? "", "pt-BR"),
-        )
-        .map((p) => ({
-          paciente_id: String(p.patient_id),
-          nome: String(p.nome ?? ""),
-          nascimento: String(p.nascimento ?? ""),
-          celular: String(p.celular ?? ""),
-          bairro: String(p.bairro ?? ""),
-          email: String(p.email ?? ""),
-        }));
+    /**
+     * TODOS os pacientes, página por página.
+     *
+     * `/patient/list` só aceita `limit`/`offset` — não há filtro por nome
+     * (conferido na documentação e no mdia-feegow-mcp). Antes buscávamos
+     * uma página de 1500 e parávamos: em clínica com mais pacientes que
+     * isso, os demais nunca apareciam no orçamento.
+     *
+     * Avança pelo número de itens que REALMENTE vieram, não pelo `limit`
+     * pedido (a API pode devolver menos por página do que se pede), e para
+     * quando uma página vem vazia ou não traz nenhum id novo — a segunda
+     * condição protege contra uma API que ignore `offset` e devolva sempre
+     * a mesma página. `maxPages` é só um teto contra laço infinito.
+     */
+    async listAllPatients(
+      opts: { pageSize?: number; maxPages?: number } = {},
+    ): Promise<FeegowPatient[]> {
+      const pageSize = opts.pageSize ?? 1000;
+      const maxPages = opts.maxPages ?? 200;
+      const byId = new Map<string, FeegowPatient>();
+      let offset = 0;
+      for (let page = 0; page < maxPages; page++) {
+        const raw = await fetcher<unknown>(
+          `/patient/list?limit=${pageSize}&offset=${offset}`,
+        );
+        const list = unwrapList(raw);
+        if (list.length === 0) break;
+        let novos = 0;
+        for (const item of list) {
+          const parsed = PatientListItemSchema.safeParse(item);
+          if (!parsed.success) continue;
+          const id = String(parsed.data.patient_id);
+          if (byId.has(id)) continue;
+          byId.set(id, {
+            paciente_id: id,
+            nome: String(parsed.data.nome ?? ""),
+            nascimento: String(parsed.data.nascimento ?? ""),
+            celular: String(parsed.data.celular ?? ""),
+            bairro: String(parsed.data.bairro ?? ""),
+            email: String(parsed.data.email ?? ""),
+          });
+          novos++;
+        }
+        if (novos === 0) break;
+        offset += list.length;
+      }
+      return [...byId.values()].sort((a, b) =>
+        a.nome.localeCompare(b.nome, "pt-BR"),
+      );
     },
 
     /**

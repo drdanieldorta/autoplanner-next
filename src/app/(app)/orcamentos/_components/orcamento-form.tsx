@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -28,7 +28,6 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-  CommandSeparator,
 } from "@/components/ui/command";
 import {
   Popover,
@@ -52,6 +51,7 @@ import {
   DocumentosSelector,
   type ContractOption,
 } from "../../_components/documentos-selector";
+import { PatientSearchCombobox } from "./patient-search-combobox";
 
 import type {
   OrcamentoPatientOption,
@@ -107,6 +107,8 @@ type Props = {
   hasCrm: boolean;
   crmError: string | null;
   crmHasMore: boolean;
+  /** Origem Feegow: `patients` é a 1ª página; o resto vem da busca no servidor. */
+  feegowHasMore: boolean;
   procedures: OrcamentoProcedureOption[];
   patients: OrcamentoPatientOption[];
   professionals: OrcamentoProfessionalOption[];
@@ -121,6 +123,7 @@ export function OrcamentoForm({
   hasCrm,
   crmError,
   crmHasMore,
+  feegowHasMore,
   procedures,
   patients,
   professionals,
@@ -163,25 +166,19 @@ export function OrcamentoForm({
   // o número em centavos no form state.
   const [installmentValueInput, setInstallmentValueInput] = useState("");
 
-  const [patientPopoverOpen, setPatientPopoverOpen] = useState(false);
   const [professionalPopoverOpen, setProfessionalPopoverOpen] = useState(false);
 
-  // Dropdown do CRM (origem CRM). A busca é do servidor — o CRM filtra
-  // por texto — e `patients` só semeia a lista com a primeira página.
-  // `crmContact` é a ORIGEM do que está nos inputs, não o valor: editar um
-  // input depois não a apaga, e o payload segue `paciente_id: "manual"`.
-  const [crmResults, setCrmResults] = useState<OrcamentoPatientOption[]>(
-    patients,
-  );
-  const [crmMore, setCrmMore] = useState(crmHasMore);
-  const [crmQuery, setCrmQuery] = useState("");
-  const [crmLoading, setCrmLoading] = useState(false);
-  const [crmSearchError, setCrmSearchError] = useState<string | null>(null);
+  // Paciente escolhido no dropdown. A busca é do servidor (as duas origens
+  // são grandes demais para filtrar no navegador), então o escolhido pode
+  // não estar em `patients` — por isso fica guardado aqui, não derivado.
+  // Feegow: o paciente É o valor (`paciente_id` da Feegow vai no payload).
+  const [feegowPatient, setFeegowPatient] =
+    useState<OrcamentoPatientOption | null>(null);
+  // CRM: `crmContact` é a ORIGEM do que está nos inputs, não o valor: editar
+  // um input depois não a apaga, e o payload segue `paciente_id: "manual"`.
   const [crmContact, setCrmContact] = useState<OrcamentoPatientOption | null>(
     null,
   );
-  const crmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const crmAbort = useRef<AbortController | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(createOrcamentoSchema),
@@ -228,7 +225,6 @@ export function OrcamentoForm({
   // eslint-disable-next-line react-hooks/incompatible-library
   const additionalProcedures = form.watch("additional_procedures");
   const protocolId = form.watch("protocol_id");
-  const patientId = form.watch("patient_id");
   const professionalId = form.watch("professional_id");
   const totalDiscount = form.watch("discount_percent");
   const paymentMethod = form.watch("payment_method");
@@ -237,11 +233,6 @@ export function OrcamentoForm({
   const prescricaoInicio = form.watch("prescricao_inicio");
   const contractIds = form.watch("contract_ids");
   const incluirTcle = form.watch("incluir_tcle_padrao");
-
-  const selectedPatient = useMemo(
-    () => patients.find((p) => p.id === patientId),
-    [patients, patientId],
-  );
 
   // Paciente fora da Feegow (CRM ou digitado): CPF e telefone são
   // obrigatórios (ver `onSubmit`). O destaque
@@ -298,7 +289,7 @@ export function OrcamentoForm({
     form.setValue("patient_phone", patient.phone);
     form.setValue("patient_birth", patient.birth);
     form.setValue("patient_neighborhood", patient.neighborhood);
-    setPatientPopoverOpen(false);
+    setFeegowPatient(patient);
 
     // CPF não vem em /patient/list — buscar pontualmente via /patient/search.
     // Falha silenciosa: se Feegow não responder, o user pode digitar manualmente
@@ -317,44 +308,6 @@ export function OrcamentoForm({
     }
   };
 
-  /** Busca no CRM com debounce; a resposta mais antiga em voo é descartada. */
-  const searchCrm = (q: string) => {
-    setCrmQuery(q);
-    if (crmTimer.current) clearTimeout(crmTimer.current);
-    crmTimer.current = setTimeout(async () => {
-      crmAbort.current?.abort();
-      const ctrl = new AbortController();
-      crmAbort.current = ctrl;
-      setCrmLoading(true);
-      setCrmSearchError(null);
-      try {
-        const res = await fetch(
-          `/api/crm/pacientes?q=${encodeURIComponent(q.trim())}`,
-          { signal: ctrl.signal },
-        );
-        if (!res.ok) {
-          const err = (await res.json().catch(() => ({}))) as {
-            error?: string;
-          };
-          throw new Error(err.error ?? "Falha ao buscar no CRM");
-        }
-        const data = (await res.json()) as {
-          items: OrcamentoPatientOption[];
-          hasMore: boolean;
-        };
-        setCrmResults(data.items);
-        setCrmMore(data.hasMore);
-      } catch (err) {
-        if (ctrl.signal.aborted) return;
-        setCrmSearchError(
-          err instanceof Error ? err.message : "Falha ao buscar no CRM",
-        );
-      } finally {
-        if (!ctrl.signal.aborted) setCrmLoading(false);
-      }
-    }, 350);
-  };
-
   const onSelectCrmContact = (contact: OrcamentoPatientOption) => {
     setCrmContact(contact);
     form.setValue("patient_id", contact.id, { shouldValidate: true });
@@ -366,7 +319,6 @@ export function OrcamentoForm({
     form.setValue("patient_email", contact.email);
     form.setValue("patient_birth", contact.birth);
     form.setValue("patient_neighborhood", "");
-    setPatientPopoverOpen(false);
   };
 
   const onManualPatient = () => {
@@ -378,7 +330,6 @@ export function OrcamentoForm({
     form.setValue("patient_email", "");
     form.setValue("patient_birth", "");
     form.setValue("patient_neighborhood", "");
-    setPatientPopoverOpen(false);
   };
 
   const onSelectProfessional = (prof: OrcamentoProfessionalOption) => {
@@ -835,172 +786,38 @@ export function OrcamentoForm({
               </p>
             )}
             {pacienteDaFeegow ? (
-              <Popover
-                open={patientPopoverOpen}
-                onOpenChange={setPatientPopoverOpen}
-              >
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    role="combobox"
-                    className="w-full justify-between mt-1 font-normal h-auto py-2"
-                  >
-                    {selectedPatient ? (
-                      <div className="flex flex-col items-start">
-                        <span>{selectedPatient.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {selectedPatient.email}
-                        </span>
-                      </div>
-                    ) : (
-                      "Selecione um paciente"
-                    )}
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="w-[--radix-popover-trigger-width] p-0"
-                  align="start"
-                >
-                  <Command>
-                    <CommandInput placeholder="Pesquisar paciente..." />
-                    <CommandList>
-                      <CommandEmpty>Nenhum paciente encontrado.</CommandEmpty>
-                      <CommandGroup>
-                        {patients.map((patient) => (
-                          <CommandItem
-                            key={patient.id}
-                            value={`${patient.name} ${patient.email}`}
-                            onSelect={() => onSelectPatient(patient)}
-                            className="flex items-center justify-between"
-                          >
-                            <div className="flex flex-col">
-                              <span className="font-medium">
-                                {patient.name}
-                              </span>
-                              <span className="text-xs text-foreground/60">
-                                {patient.email}
-                              </span>
-                            </div>
-                            <Check
-                              className={cn(
-                                "ml-auto h-4 w-4",
-                                patientId === patient.id
-                                  ? "opacity-100"
-                                  : "opacity-0",
-                              )}
-                            />
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+              <PatientSearchCombobox
+                endpoint="/api/feegow/pacientes"
+                initialItems={patients}
+                initialHasMore={feegowHasMore}
+                selected={feegowPatient}
+                onSelect={onSelectPatient}
+                placeholder="Selecione um paciente"
+                searchPlaceholder="Nome, e-mail ou telefone..."
+                emptyText="Nenhum paciente encontrado na Feegow."
+                subtitle={(p) => p.email || p.phone || "sem e-mail"}
+                className="mt-1"
+              />
             ) : (
               <div className="space-y-2 mt-1">
                 {hasCrm && (
-                  <Popover
-                    open={patientPopoverOpen}
-                    onOpenChange={setPatientPopoverOpen}
-                  >
-                    <PopoverTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        role="combobox"
-                        className="w-full justify-between font-normal h-auto py-2"
-                      >
-                        {crmContact ? (
-                          <div className="flex flex-col items-start">
-                            <span>{crmContact.name}</span>
-                            <span className="text-xs text-muted-foreground">
-                              CRM · {crmContact.phone || "sem telefone"}
-                            </span>
-                          </div>
-                        ) : (
-                          "Buscar paciente no CRM"
-                        )}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      className="w-[--radix-popover-trigger-width] p-0"
-                      align="start"
-                    >
-                      {/* O filtro é do servidor. Se o cmdk filtrasse de novo,
-                          esconderia o item fixo "Preencher manualmente". */}
-                      <Command shouldFilter={false}>
-                        <CommandInput
-                          placeholder="Nome, telefone ou e-mail..."
-                          value={crmQuery}
-                          onValueChange={searchCrm}
-                        />
-                        <CommandList>
-                          {crmSearchError ? (
-                            <p className="p-3 text-sm text-destructive">
-                              {crmSearchError}
-                            </p>
-                          ) : crmLoading ? (
-                            <p className="p-3 text-sm text-muted-foreground">
-                              Buscando...
-                            </p>
-                          ) : crmResults.length === 0 ? (
-                            <p className="p-3 text-sm text-muted-foreground">
-                              Nenhum paciente encontrado no CRM.
-                            </p>
-                          ) : null}
-                          {crmResults.length > 0 && (
-                            <CommandGroup>
-                              {crmResults.map((contact) => (
-                                <CommandItem
-                                  key={contact.id}
-                                  value={contact.id}
-                                  onSelect={() => onSelectCrmContact(contact)}
-                                  className="flex items-center justify-between"
-                                >
-                                  <div className="flex flex-col">
-                                    <span className="font-medium">
-                                      {contact.name}
-                                    </span>
-                                    <span className="text-xs text-foreground/60">
-                                      {contact.phone ||
-                                        contact.email ||
-                                        "sem telefone"}
-                                    </span>
-                                  </div>
-                                  <Check
-                                    className={cn(
-                                      "ml-auto h-4 w-4",
-                                      crmContact?.id === contact.id
-                                        ? "opacity-100"
-                                        : "opacity-0",
-                                    )}
-                                  />
-                                </CommandItem>
-                              ))}
-                            </CommandGroup>
-                          )}
-                          {crmMore && !crmLoading && !crmSearchError && (
-                            <p className="px-3 pb-2 text-xs text-muted-foreground">
-                              Há mais resultados. Digite para refinar.
-                            </p>
-                          )}
-                          <CommandSeparator />
-                          <CommandGroup>
-                            <CommandItem
-                              value="__manual__"
-                              onSelect={onManualPatient}
-                            >
-                              <Plus className="mr-2 h-4 w-4" />
-                              Não está na lista? Preencher manualmente
-                            </CommandItem>
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
+                  <PatientSearchCombobox
+                    endpoint="/api/crm/pacientes"
+                    initialItems={patients}
+                    initialHasMore={crmHasMore}
+                    selected={crmContact}
+                    onSelect={onSelectCrmContact}
+                    placeholder="Buscar paciente no CRM"
+                    searchPlaceholder="Nome, telefone ou e-mail..."
+                    emptyText="Nenhum paciente encontrado no CRM."
+                    subtitle={(p) =>
+                      `CRM · ${p.phone || p.email || "sem telefone"}`
+                    }
+                    manual={{
+                      label: "Não está na lista? Preencher manualmente",
+                      onSelect: onManualPatient,
+                    }}
+                  />
                 )}
                 <Input
                   placeholder="Nome do paciente"

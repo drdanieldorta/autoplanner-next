@@ -386,7 +386,7 @@ ${supersede}
     <div class="nome">${ou(plano.paciente.nome)}</div>
     <div class="linha">CPF ${cpfCompleto(plano.paciente.cpf)}</div>
     <div class="linha">Nasc. ${ou(plano.paciente.nascimento)}${idade}</div>
-    ${plano.paciente.feegow_id ? `<div class="linha">Prontuário ${escapeHtml(plano.paciente.feegow_id)}</div>` : ""}
+    ${plano.paciente.feegow_id && plano.paciente.feegow_id !== "manual" ? `<div class="linha">Prontuário ${escapeHtml(plano.paciente.feegow_id)}</div>` : ""}
   </td>
   <td>
     <div class="lbl">Profissional responsável</div>

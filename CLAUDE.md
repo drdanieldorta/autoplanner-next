@@ -237,6 +237,28 @@ lá). O envio do cronograma já recusava paciente manual.
 orçamento — os profissionais continuam vindo da Feegow e a lista sai vazia.
 Feegow configurada mas fora do ar segue sem fallback (decisão 2026-09-22).
 
+## Pacientes da Feegow (lista completa + busca no servidor)
+
+`/patient/list` da Feegow só aceita `limit`/`offset` — **não há filtro por nome**
+(conferido na documentação e no `mdia-feegow-mcp`). Até 2026-10-22 o formulário
+pedia uma página de 1500 e parava: em clínica maior, o resto dos pacientes nunca
+aparecia. Agora `feegow(token).listAllPatients()` pagina até o fim, avançando
+pelo número de itens que vieram (não pelo `limit` pedido) e parando em página
+vazia ou sem id novo (proteção contra API que ignore `offset`).
+
+A busca roda no servidor sobre a lista inteira, mantida **em memória** por 5
+minutos por empresa + hash do token (`lib/services/feegow-patients.ts`) — não no
+data cache da Vercel, porque a lista de clínica grande passa do limite de item e
+não queremos dado de paciente persistido lá. Busca vazia que não acha nada com a
+lista com mais de 1 minuto recarrega uma vez (paciente recém-cadastrado). Casa
+todas as palavras no nome (sem acento/caixa), e-mail, ou telefone (4+ dígitos).
+
+O formulário abre esperando a lista no máximo 3s; clínica grande na primeira vez
+abre com o dropdown vazio ("Digite para buscar") e `after()` mantém o
+carregamento vivo para a busca achar o cache. O dropdown de Feegow e o do CRM são
+o MESMO componente (`patient-search-combobox.tsx`, `shouldFilter={false}`, busca
+em `GET /api/feegow/pacientes?q=` e `GET /api/crm/pacientes?q=`).
+
 ## Pacientes do CRM
 
 Quando a origem efetiva é `crm` (ver acima) e a empresa tem `crm_token`,
@@ -492,6 +514,7 @@ como HTTP 200 com `{"success": false}`. O `fetcher` genérico só lança em `!re
 - **Mutations Supabase quebram com type "never"** no SDK atual + types gerados PostgrestVersion 13.0.5. Padrão: `.insert(payload as never)`, `.update(payload as never)`, `.upsert(payload as never)`. Quando regerarmos os types via `npm run types:supabase`, isso pode parar.
 - **Turbopack panic com CSS** em paths com espaços no Windows pode acontecer (ex: `Projetos Claude\`). Solução: `rm -rf .next` e relaunch, ou rodar com webpack via env. Build de produção não é afetado.
 - **RHF `form.watch()` viola `react-hooks/incompatible-library`.** Usar `// eslint-disable-next-line react-hooks/incompatible-library` na linha. É padrão idiomático do RHF.
+- **Toda cor de `globals.css` usada como classe precisa estar em `tailwind.config.ts`.** `--popover` existia no CSS mas não no config: `bg-popover` não gerava nada e todo Popover/Command/DropdownMenu/Tooltip ficava transparente, com o texto da página aparecendo por trás (corrigido 2026-10-22).
 - **Client Components não podem importar de arquivos com `import "server-only"`.** Quando precisar compartilhar uma constante (ex: `CONTRACT_VARIABLES`), extrair para arquivo neutro em `lib/<dominio>/variables.ts`.
 
 ## Onde NÃO criar coisa

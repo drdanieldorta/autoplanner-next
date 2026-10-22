@@ -57,6 +57,12 @@ export function planHash(plano: PlanoExecucao): string {
 
 type PropostaRow = Record<string, unknown>;
 
+/** `paciente_id` da Feegow, ou null para vazio e para o literal "manual". */
+function idDeProntuario(pacienteId: string): string | null {
+  const id = pacienteId.trim();
+  return id && id !== "manual" ? id : null;
+}
+
 /**
  * Carrega tudo que a folha precisa e devolve o plano JÁ PROJETADO.
  *
@@ -231,7 +237,9 @@ export async function loadPrescricaoFonte(args: {
       cpf: str("paciente_cpf"),
       nascimento: str("paciente_nascimento"),
       telefone: str("paciente_telefone"),
-      feegow_id: str("paciente_id") || null,
+      // Paciente digitado ou do CRM grava `paciente_id: "manual"` — não é
+      // número de prontuário, e a folha imprimiria "Prontuário manual".
+      feegow_id: idDeProntuario(str("paciente_id")),
       alergias: (proposta.paciente_alergias as string | null) ?? null,
     },
     profissional: {

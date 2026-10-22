@@ -1,5 +1,7 @@
 import "server-only";
 
+import { after } from "next/server";
+
 import {
   feegow,
   FeegowError,
@@ -19,6 +21,7 @@ import {
   resolvePatientSource,
   type PatientSource,
 } from "@/lib/orcamento/patient-source";
+import { firstFeegowPatientsPage } from "@/lib/services/feegow-patients";
 import { listFuncionarios } from "@/lib/services/funcionarios";
 
 export type OrcamentoProcedureOption = {
@@ -74,12 +77,37 @@ export type OrcamentoFormData = {
   crmError: string | null;
   /** A primeira página do CRM tem continuação (o dropdown pede para refinar). */
   crmHasMore: boolean;
+  /**
+   * Origem Feegow: `patients` é só a primeira página (a busca conforme
+   * digita vai a `GET /api/feegow/pacientes`), e esta flag diz se há mais.
+   */
+  feegowHasMore: boolean;
   procedures: OrcamentoProcedureOption[];
   patients: OrcamentoPatientOption[];
   professionals: OrcamentoProfessionalOption[];
   /** True quando alguma chamada Feegow falhou — UI exibe aviso. */
   feegowError: string | null;
 };
+
+/** Paciente da Feegow no shape do dropdown. CPF vem depois, por paciente. */
+export function feegowPatientToOption(p: FeegowPatient): OrcamentoPatientOption {
+  return {
+    id: p.paciente_id,
+    name: p.nome,
+    email: p.email,
+    phone: p.celular,
+    birth: p.nascimento,
+    neighborhood: p.bairro,
+    cpf: "",
+  };
+}
+
+/**
+ * Quanto a abertura do formulário espera pela lista de pacientes da Feegow.
+ * Clínica grande leva mais que isso na primeira vez: o formulário abre com
+ * o dropdown vazio e a busca encontra o cache já carregado.
+ */
+const FEEGOW_PATIENTS_WAIT_MS = 3_000;
 
 /** Tamanho da página do dropdown de pacientes do CRM (máximo da API: 100). */
 const CRM_PAGE_SIZE = 20;
@@ -121,23 +149,17 @@ function feegowErrorMessage(reason: unknown, fallback: string): string {
 }
 
 /**
- * Procedimentos e profissionais da Feegow e, só quando o paciente vem de
- * lá, a lista de pacientes — a chamada mais pesada das três, que não
- * precisa acontecer quando a origem é o CRM ou manual.
+ * Procedimentos e profissionais da Feegow. Pacientes ficam de fora: vêm
+ * da busca paginada com cache (`lib/services/feegow-patients.ts`).
  */
-async function loadFeegowData(
-  token: string,
-  withPatients: boolean,
-): Promise<{
+async function loadFeegowCatalog(token: string): Promise<{
   procedures: FeegowProcedure[];
-  patients: FeegowPatient[];
   professionals: FeegowProfessional[];
   errors: string[];
 }> {
   const client = feegow(token);
-  const [procedures, patients, professionals] = await Promise.allSettled([
+  const [procedures, professionals] = await Promise.allSettled([
     client.listProcedures(),
-    withPatients ? client.listPatients() : Promise.resolve([]),
     client.listProfessionals(),
   ]);
   const errors: string[] = [];
@@ -148,10 +170,42 @@ async function loadFeegowData(
   };
   return {
     procedures: valueOr(procedures, "Falha ao carregar procedimentos"),
-    patients: valueOr(patients, "Falha ao carregar pacientes"),
     professionals: valueOr(professionals, "Falha ao carregar profissionais"),
     errors,
   };
+}
+
+/** Primeira página de pacientes da Feegow; falha vira mensagem, não exceção. */
+async function loadFeegowPatientsSeed(
+  companyId: string,
+  token: string,
+): Promise<{
+  items: FeegowPatient[];
+  hasMore: boolean;
+  error: string | null;
+}> {
+  try {
+    const { page, pending } = await firstFeegowPatientsPage({
+      companyId,
+      token,
+      waitMs: FEEGOW_PATIENTS_WAIT_MS,
+    });
+    // Se a lista não chegou a tempo, mantém o carregamento vivo depois da
+    // resposta, para a primeira busca do dropdown já achar o cache.
+    if (!page) after(() => pending);
+    return {
+      items: page?.items ?? [],
+      // Sem a lista ainda, "há mais" é o certo: o dropdown pede para digitar.
+      hasMore: page ? page.hasMore : true,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      items: [],
+      hasMore: false,
+      error: feegowErrorMessage(err, "Falha ao carregar pacientes"),
+    };
+  }
 }
 
 /**
@@ -163,8 +217,9 @@ async function loadFeegowData(
  *   empresa tem a chave; senão procedimentos são digitados na hora e
  *   profissionais vêm de profiles.
  * - **Paciente**: a origem escolhida em Configurações, resolvida contra as
- *   chaves (`resolvePatientSource`). Feegow → lista de pacientes da Feegow;
- *   CRM → primeira página dos contatos "Paciente"; manual → nada.
+ *   chaves (`resolvePatientSource`). Feegow → primeira página da lista
+ *   completa (busca no servidor depois); CRM → primeira página dos contatos
+ *   "Paciente"; manual → nada.
  *
  * Falhas não derrubam a página: Feegow vira `feegowError`, CRM vira
  * `crmError` (e o formulário volta a ser o manual de sempre).
@@ -181,9 +236,10 @@ export async function loadOrcamentoFormData(
     { hasFeegow, hasCrm: !!crmToken },
   );
 
-  const [feegowData, crm, funcionarios] = await Promise.all([
-    feegowToken
-      ? loadFeegowData(feegowToken, patientSource === "feegow")
+  const [feegowData, feegowPatients, crm, funcionarios] = await Promise.all([
+    feegowToken ? loadFeegowCatalog(feegowToken) : Promise.resolve(null),
+    feegowToken && patientSource === "feegow"
+      ? loadFeegowPatientsSeed(companyId, feegowToken)
       : Promise.resolve(null),
     patientSource === "crm" && crmToken
       ? searchCrmPatients(crmToken, "").then(
@@ -202,15 +258,7 @@ export async function loadOrcamentoFormData(
 
   const patients: OrcamentoPatientOption[] =
     patientSource === "feegow"
-      ? (feegowData?.patients ?? []).map((p) => ({
-          id: p.paciente_id,
-          name: p.nome,
-          email: p.email,
-          phone: p.celular,
-          birth: p.nascimento,
-          neighborhood: p.bairro,
-          cpf: "",
-        }))
+      ? (feegowPatients?.items ?? []).map(feegowPatientToOption)
       : crm?.ok === true
         ? crm.page.items
         : [];
@@ -241,6 +289,7 @@ export async function loadOrcamentoFormData(
     hasCrm: crm?.ok === true,
     crmError: crm && !crm.ok ? crm.error : null,
     crmHasMore: crm?.ok === true ? crm.page.hasMore : false,
+    feegowHasMore: feegowPatients?.hasMore ?? false,
     procedures: (feegowData?.procedures ?? []).map((p) => ({
       id: p.procedimento_id,
       name: p.nome,
@@ -249,9 +298,12 @@ export async function loadOrcamentoFormData(
     })),
     patients,
     professionals,
-    feegowError:
-      feegowData && feegowData.errors.length > 0
-        ? feegowData.errors.join(" · ")
-        : null,
+    feegowError: (() => {
+      const errors = [
+        ...(feegowData?.errors ?? []),
+        ...(feegowPatients?.error ? [feegowPatients.error] : []),
+      ];
+      return errors.length > 0 ? errors.join(" · ") : null;
+    })(),
   };
 }
