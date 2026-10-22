@@ -133,8 +133,9 @@ export function AutentiqueWebhookCard({ url, ultimaAssinatura }: Props) {
           </li>
           <li>
             Salve. Se existir um webhook antigo apontando para outro endereço
-            (por exemplo, o n8n), remova-o ou troque a URL dele por esta.
-            Enquanto ele existir, as assinaturas continuam indo para lá.
+            (por exemplo, o n8n), troque a URL dele por esta ou remova-o.
+            Deixar os dois ativos pode anexar o contrato assinado duas vezes
+            ao prontuário da Feegow.
           </li>
           <li>
             Teste: envie um contrato para o seu próprio WhatsApp, assine e

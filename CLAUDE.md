@@ -249,8 +249,8 @@ vazia ou sem id novo (proteção contra API que ignore `offset`).
 A busca roda no servidor sobre a lista inteira, mantida **em memória** por 5
 minutos por empresa + hash do token (`lib/services/feegow-patients.ts`) — não no
 data cache da Vercel, porque a lista de clínica grande passa do limite de item e
-não queremos dado de paciente persistido lá. Busca vazia que não acha nada com a
-lista com mais de 1 minuto recarrega uma vez (paciente recém-cadastrado). Casa
+não queremos dado de paciente persistido lá. Busca que não acha nada com a lista
+com mais de 1 minuto recarrega uma vez (paciente recém-cadastrado). Casa
 todas as palavras no nome (sem acento/caixa), e-mail, ou telefone (4+ dígitos).
 
 O formulário abre esperando a lista no máximo 3s; clínica grande na primeira vez
