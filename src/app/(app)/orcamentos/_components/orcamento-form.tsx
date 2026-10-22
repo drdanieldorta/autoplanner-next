@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/popover";
 import { formatCurrency, parseCurrency } from "@/lib/currency";
 import { formatCurrencyInput, formatCPF, formatPhoneNumber } from "@/lib/masks";
+import type { PatientSource } from "@/lib/orcamento/patient-source";
 import type { Via } from "@/lib/prescricao/enums";
 import type { AjusteItem, PrescricaoAjustes } from "@/lib/prescricao/types";
 import { cn } from "@/lib/utils";
@@ -93,9 +94,16 @@ type ProtocolOption = ProtocolOptionDocs & {
 };
 
 type Props = {
+  /** Procedimentos e profissionais vêm da Feegow (a empresa tem a chave). */
   hasFeegow: boolean;
+  /**
+   * Origem do paciente, já resolvida no servidor (Configurações + chaves).
+   * Independe de `hasFeegow`: uma empresa com Feegow pode puxar o paciente
+   * do CRM ou digitá-lo — e aí o orçamento não vira proposta na Feegow.
+   */
+  patientSource: PatientSource;
   feegowError: string | null;
-  /** Sem Feegow e com CRM: `patients` é a 1ª página de contatos "Paciente". */
+  /** Origem CRM e o CRM respondeu: `patients` é a 1ª página de contatos "Paciente". */
   hasCrm: boolean;
   crmError: string | null;
   crmHasMore: boolean;
@@ -108,6 +116,7 @@ type Props = {
 
 export function OrcamentoForm({
   hasFeegow,
+  patientSource,
   feegowError,
   hasCrm,
   crmError,
@@ -157,7 +166,7 @@ export function OrcamentoForm({
   const [patientPopoverOpen, setPatientPopoverOpen] = useState(false);
   const [professionalPopoverOpen, setProfessionalPopoverOpen] = useState(false);
 
-  // Dropdown do CRM (modo sem Feegow). A busca é do servidor — o CRM filtra
+  // Dropdown do CRM (origem CRM). A busca é do servidor — o CRM filtra
   // por texto — e `patients` só semeia a lista com a primeira página.
   // `crmContact` é a ORIGEM do que está nos inputs, não o valor: editar um
   // input depois não a apaga, e o payload segue `paciente_id: "manual"`.
@@ -234,14 +243,17 @@ export function OrcamentoForm({
     [patients, patientId],
   );
 
-  // Sem Feegow, CPF e telefone são obrigatórios (ver `onSubmit`). O destaque
+  // Paciente fora da Feegow (CRM ou digitado): CPF e telefone são
+  // obrigatórios (ver `onSubmit`). O destaque
   // só acende quando faz sentido: depois de escolher um contato do CRM (o
   // que faltou não veio de lá) ou depois de uma tentativa de salvar — um
   // formulário recém-aberto não nasce vermelho.
   const patientCpf = form.watch("patient_cpf") ?? "";
   const patientPhone = form.watch("patient_phone") ?? "";
+  const pacienteDaFeegow = patientSource === "feegow";
   const showMissing =
-    !hasFeegow && (crmContact !== null || form.formState.submitCount > 0);
+    !pacienteDaFeegow &&
+    (crmContact !== null || form.formState.submitCount > 0);
   const cpfMissing =
     showMissing && patientCpf.replace(/\D/g, "").length !== 11;
   const phoneMissing =
@@ -291,7 +303,7 @@ export function OrcamentoForm({
     // CPF não vem em /patient/list — buscar pontualmente via /patient/search.
     // Falha silenciosa: se Feegow não responder, o user pode digitar manualmente
     // no campo CPF (que continua editável).
-    if (hasFeegow && patient.id && patient.id !== "manual") {
+    if (pacienteDaFeegow && patient.id && patient.id !== "manual") {
       fetch(`/api/feegow/pacientes/${encodeURIComponent(patient.id)}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data: { cpf?: string } | null) => {
@@ -574,7 +586,7 @@ export function OrcamentoForm({
       return;
     }
 
-    // Sem Feegow (paciente manual ou do CRM), CPF e telefone valem para os
+    // Paciente fora da Feegow (digitado ou do CRM), CPF e telefone valem para os
     // DOIS botões (decisão 2026-09-22): não existe tela para completar
     // depois, e um rascunho sem CPF viraria beco sem saída na hora de
     // enviar o contrato. `envio-manual` recusa no servidor também.
@@ -582,7 +594,7 @@ export function OrcamentoForm({
     // Lê de `values`, não de `cpfMissing`/`phoneMissing`: esses dois vêm do
     // render anterior ao clique, quando `submitCount` ainda era 0 — o
     // destaque acende depois, nesta mesma tentativa.
-    if (!hasFeegow) {
+    if (!pacienteDaFeegow) {
       const cpfOk =
         (values.patient_cpf ?? "").replace(/\D/g, "").length === 11;
       const phoneOk =
@@ -636,8 +648,10 @@ export function OrcamentoForm({
     ];
 
     const payload = {
-      // identidade — em modo manual, ids são literais "manual" (parity com Vite)
-      paciente_id: hasFeegow ? values.patient_id : "manual",
+      // identidade — fora da Feegow, ids são literais "manual" (parity com
+      // Vite). O paciente decide se o orçamento vira proposta na Feegow: a
+      // rota só cria lá quando recebe um `paciente_id` da Feegow.
+      paciente_id: pacienteDaFeegow ? values.patient_id : "manual",
       paciente_nome: values.patient_name,
       paciente_cpf: values.patient_cpf || undefined,
       paciente_email: values.patient_email || undefined,
@@ -812,7 +826,15 @@ export function OrcamentoForm({
             <Label className="text-sm font-medium text-muted-foreground">
               Paciente
             </Label>
-            {hasFeegow ? (
+            {hasFeegow && !pacienteDaFeegow && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {patientSource === "crm"
+                  ? "Paciente do CRM, conforme Configurações."
+                  : "Paciente digitado, conforme Configurações."}{" "}
+                Este orçamento não vira proposta na Feegow.
+              </p>
+            )}
+            {pacienteDaFeegow ? (
               <Popover
                 open={patientPopoverOpen}
                 onOpenChange={setPatientPopoverOpen}

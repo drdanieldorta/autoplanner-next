@@ -82,6 +82,9 @@ autoplanner-next/
 │       ├── crm/
 │       │   └── contacts.ts       ← neutro: tag "Paciente", parse de customFields
 │       │                            (CPF, nascimento), telefone do CRM → máscara
+│       ├── orcamento/
+│       │   └── patient-source.ts ← neutro: origem do paciente no orçamento
+│       │                            (preferência de Configurações + chaves)
 │       ├── contracts/
 │       │   ├── custom-doc.ts     ← neutro: Markdown → HTML do modelo do usuário,
 │       │   │                        tabela de procedimentos, shell do PDF, dados da prévia
@@ -194,14 +197,51 @@ npm install --legacy-peer-deps
 - [x] **Fase 5.3: Vários documentos por plano, numa assinatura só** — `protocol_contracts` + `proposta_contracts` (join com `ordem`) e `incluir_tcle_padrao` em ambos. `buildContractHtml` virou `buildContractsHtml`, refatorada em fragmento + shell. `<DocumentosSelector>` compartilhado por protocolo e orçamento. Ver "Documentos do plano" abaixo.
 - [x] **Fase 5.4: Pacientes do CRM no orçamento (fallback sem Feegow)** — empresa sem `feegow_token` e com `crm_token` ganha um combobox que busca contatos etiquetados "Paciente" na Helena/WTS (`POST /contact/filter`, busca do servidor conforme digita via `GET /api/crm/pacientes?q=`). CPF e nascimento vêm de `customFields` quando a conta tem esses campos; o que não vier é digitado nos mesmos inputs do modo manual. CPF e telefone passaram a ser obrigatórios para paciente manual/CRM (form + `envio-manual`). Ver "Pacientes do CRM" abaixo.
 - [x] **Fase 5.5: Modelo de contrato em Markdown + prévia** — `contracts.content` passou a ser Markdown, renderizado por `lib/contracts/custom-doc.ts` (neutro, `marked`) tanto no PDF quanto na prévia ao vivo do editor (`<iframe sandbox srcDoc>`, dados fictícios, marca da empresa). `{{procedimentos}}` sozinha numa linha vira tabela (nome e quantidade, sem valor por item — decisão 2026-10-16); `{{subtotal}}`/`{{desconto}}`/`{{total}}` passaram a refletir o desconto real do orçamento (antes desconto era fixo em R$ 0,00). Ver "Modelo do usuário é Markdown" abaixo.
+- [x] **Fase 5.6: Origem dos pacientes em Configurações** — dropdown em `/configuracao` (`api_credentials.patient_source`: `feegow` padrão, `crm`, `manual`). O padrão reproduz o comportamento anterior (Feegow → CRM → manual conforme as chaves). Só o paciente muda de origem: procedimentos e profissionais seguem da Feegow quando há chave. Sem paciente da Feegow, `POST /api/propostas` não cria proposta lá e o webhook da Authentique não anexa ao prontuário. Ver "Origem dos pacientes no orçamento" abaixo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
 
-## Pacientes do CRM (fallback sem Feegow)
+## Origem dos pacientes no orçamento (Configurações)
 
-Só para empresa **sem** `feegow_token` (decisão 2026-09-22 — Feegow configurada
-mas fora do ar continua sem fallback). Com `crm_token`, `loadOrcamentoFormData`
-busca a primeira página de contatos etiquetados **"Paciente"** na Helena/WTS e
-liga `hasCrm`; a busca conforme digita vai a `GET /api/crm/pacientes?q=`, que
+A empresa escolhe em `/configuracao` de onde o formulário de orçamento puxa o
+paciente (decisão 2026-10-22). Fica em `api_credentials.patient_source` (CHECK
+`feegow | crm | manual`, default `feegow`) e é resolvida contra as chaves por
+`resolvePatientSource` ([patient-source.ts](src/lib/orcamento/patient-source.ts),
+neutro — o loader usa no servidor e a tela de Configurações mostra a mesma
+resolução ao vivo, "Com as chaves configuradas hoje: ..."):
+
+| Preferência | Tem a chave | Falta a chave |
+|---|---|---|
+| `feegow` (padrão) | Feegow | CRM; sem CRM, manual |
+| `crm` | CRM | manual (nunca Feegow) |
+| `manual` | manual | — |
+
+O padrão é exatamente o comportamento de antes da opção existir, por isso a
+migration não mudou nada para nenhuma empresa.
+
+**Só o PACIENTE muda de origem.** Procedimentos e profissionais continuam
+vindo da Feegow quando há `feegow_token` (`hasFeegow` no formulário segue
+significando "catálogo da Feegow"); a origem do paciente é outra prop,
+`patientSource`. Com origem ≠ `feegow`, `listPatients()` da Feegow (a chamada
+mais pesada) nem é feita.
+
+**Sem paciente da Feegow não existe proposta na Feegow.** `createProposal`
+exige `paciente_id` da Feegow. Então `POST /api/propostas` cria lá só com
+`feegow_token` **e** `paciente_id` diferente de `"manual"`/vazio — decide pelo
+PAYLOAD, não pela preferência salva, porque a preferência pode mudar com um
+formulário aberto. Pelo mesmo motivo o webhook da Authentique só anexa o
+contrato assinado ao prontuário quando o `paciente_id` é da Feegow (antes
+bastava a empresa ter a chave, e numa empresa com Feegow todo paciente era de
+lá). O envio do cronograma já recusava paciente manual.
+
+**Limite conhecido:** com a Feegow fora do ar, trocar para CRM não salva o
+orçamento — os profissionais continuam vindo da Feegow e a lista sai vazia.
+Feegow configurada mas fora do ar segue sem fallback (decisão 2026-09-22).
+
+## Pacientes do CRM
+
+Quando a origem efetiva é `crm` (ver acima) e a empresa tem `crm_token`,
+`loadOrcamentoFormData` busca a primeira página de contatos etiquetados
+**"Paciente"** na Helena/WTS e liga `hasCrm`; a busca conforme digita vai a `GET /api/crm/pacientes?q=`, que
 repassa `q` como `textFilter` da API (o CRM procura em nome, telefone e e-mail).
 Contas com **milhares** de pacientes existem — por isso a busca é do servidor e
 o dropdown mostra uma página de 20, nunca a lista inteira.
@@ -231,12 +271,13 @@ continuam editáveis, e "Não está na lista? Preencher manualmente" só limpa a
 seleção. Falha do CRM na abertura vira `crmError` (Alert) e o formulário volta a
 ser o manual de sempre.
 
-**CPF e telefone obrigatórios para paciente manual/CRM**, nos dois botões
+**CPF e telefone obrigatórios para paciente manual/CRM** (origem ≠ `feegow`,
+inclusive em empresa com Feegow), nos dois botões
 ("Salvar" e "Salvar e enviar"), porque **não existe tela de edição de orçamento**:
 um rascunho sem CPF viraria beco sem saída na hora de enviar o contrato. O
 `envio-manual` recusa com 422 pelo mesmo critério (CPF com 11 dígitos, telefone
-com 10+), o que cobre o botão da tela de detalhe e os orçamentos antigos. **Modo
-Feegow fica de fora** dessa regra: lá o CPF vem do prontuário e o formulário não
+com 10+), o que cobre o botão da tela de detalhe e os orçamentos antigos.
+**Paciente da Feegow fica de fora** dessa regra: lá o CPF vem do prontuário e o formulário não
 tem campo para digitá-lo — exigir criaria o mesmo beco sem saída. O destaque
 vermelho nos inputs só acende após escolher um contato do CRM ou após uma
 tentativa de salvar; um formulário recém-aberto não nasce vermelho.

@@ -337,6 +337,7 @@ export type Database = {
           crm_token: string | null
           feegow_token: string | null
           id: string
+          patient_source: string
           updated_at: string
           user_id: string
           webhook_enabled: boolean | null
@@ -351,6 +352,7 @@ export type Database = {
           crm_token?: string | null
           feegow_token?: string | null
           id?: string
+          patient_source?: string
           updated_at?: string
           user_id: string
           webhook_enabled?: boolean | null
@@ -365,6 +367,7 @@ export type Database = {
           crm_token?: string | null
           feegow_token?: string | null
           id?: string
+          patient_source?: string
           updated_at?: string
           user_id?: string
           webhook_enabled?: boolean | null

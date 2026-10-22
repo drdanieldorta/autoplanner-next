@@ -13,6 +13,7 @@ import {
 import { PageHeader } from "../_components/page-header";
 import { ConfiguracaoForm } from "./_components/configuracao-form";
 import { BrandingForm } from "./_components/branding-form";
+import { PatientSourceForm } from "./_components/patient-source-form";
 
 export const metadata = { title: "Configuração · InfinitePlan" };
 export const dynamic = "force-dynamic";
@@ -117,6 +118,12 @@ export default async function ConfiguracaoPage() {
           )}
         </CardContent>
       </Card>
+
+      <PatientSourceForm
+        value={status?.patientSource ?? "feegow"}
+        hasFeegow={status?.hasFeegow ?? false}
+        hasCrm={status?.hasCrm ?? false}
+      />
 
       <BrandingForm
         logoUrl={branding?.logoUrl ?? null}
