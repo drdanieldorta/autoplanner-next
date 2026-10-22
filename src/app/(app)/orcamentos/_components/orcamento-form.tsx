@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, Trash2, Check, ChevronsUpDown, AlertCircle } from "lucide-react";
+import { Plus, Trash2, Check, ChevronsUpDown, AlertCircle, X, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -93,6 +93,24 @@ type ProtocolOption = ProtocolOptionDocs & {
   items: ProtocolItem[];
 };
 
+/**
+ * Item de protocolo DENTRO deste orçamento. `quantity` é a escolhida aqui
+ * (começa na do protocolo); `incluido: false` é item retirado, que segue na
+ * tela para poder ser restaurado mas não entra em nada.
+ */
+type ItemNoOrcamento = ProtocolItem & {
+  protocoloId: string;
+  protocoloNome: string;
+  quantidadeProtocolo: number;
+  incluido: boolean;
+};
+
+type ProtocoloNoOrcamento = ProtocolOptionDocs & {
+  id: string;
+  name: string;
+  itens: ItemNoOrcamento[];
+};
+
 type Props = {
   /** Procedimentos e profissionais vêm da Feegow (a empresa tem a chave). */
   hasFeegow: boolean;
@@ -133,10 +151,21 @@ export function OrcamentoForm({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  // Itens do protocolo base — derivados do protocolo selecionado (já vêm
-  // inline em `protocols`). Comercialmente não são editáveis aqui; a camada
-  // clínica deles é, via delta (abaixo).
-  const [protocolItems, setProtocolItems] = useState<ProtocolItem[]>([]);
+  // Protocolos deste orçamento (vários, decisão 2026-10-22), na ordem em que
+  // foram adicionados. Valor e desconto vêm do protocolo e não se editam
+  // aqui; a QUANTIDADE se edita e o item pode ser retirado. A camada clínica
+  // segue via delta (abaixo). O servidor remonta o retrato a partir de
+  // `protocol_items` com essa escolha (`montarItensProtocolo`).
+  const [protocolos, setProtocolos] = useState<ProtocoloNoOrcamento[]>([]);
+  // Para o seletor "Adicionar protocolo" voltar ao placeholder a cada adição.
+  const [addProtocoloKey, setAddProtocoloKey] = useState(0);
+
+  // Itens INCLUÍDOS de todos os protocolos — o que vai para totais, grade
+  // clínica, proposta da Feegow e retrato.
+  const protocolItems = useMemo(
+    () => protocolos.flatMap((p) => p.itens.filter((i) => i.incluido)),
+    [protocolos],
+  );
 
   // Camada clínica ajustada PARA ESTE PACIENTE. Mesmo formato e mesma chave
   // (`protocol_items.id`) que `/orcamentos/[id]/cronograma` grava depois — é
@@ -224,7 +253,6 @@ export function OrcamentoForm({
   // é a forma idiomática de re-renderizar quando os campos mudam.
   // eslint-disable-next-line react-hooks/incompatible-library
   const additionalProcedures = form.watch("additional_procedures");
-  const protocolId = form.watch("protocol_id");
   const professionalId = form.watch("professional_id");
   const totalDiscount = form.watch("discount_percent");
   const paymentMethod = form.watch("payment_method");
@@ -343,29 +371,105 @@ export function OrcamentoForm({
     setProfessionalPopoverOpen(false);
   };
 
-  const onSelectProtocol = (id: string) => {
-    // Trocar de protocolo invalida o delta inteiro: as chaves são ids de
-    // `protocol_items` do protocolo ANTERIOR, e mantê-las produziria ajustes
-    // órfãos — invisíveis na tela, visíveis só como aviso na folha.
-    setAjustes({});
-    if (id === "none") {
-      form.setValue("protocol_id", null);
-      form.setValue("protocol_name", null);
-      setProtocolItems([]);
-      form.setValue("contract_ids", []);
-      form.setValue("incluir_tcle_padrao", false);
-      return;
-    }
+  /** Mantém `protocol_id`/`protocol_name` do form em sincronia (listagens). */
+  const sincronizarCamposDeProtocolo = (lista: ProtocoloNoOrcamento[]) => {
+    form.setValue("protocol_id", lista[0]?.id ?? null);
+    form.setValue(
+      "protocol_name",
+      lista.length > 0 ? lista.map((p) => p.name).join(" + ") : null,
+    );
+  };
+
+  const onAddProtocol = (id: string) => {
+    setAddProtocoloKey((k) => k + 1);
+    if (protocolos.some((p) => p.id === id)) return;
     const protocol = protocols.find((p) => p.id === id);
     if (!protocol) return;
-    form.setValue("protocol_id", id);
-    form.setValue("protocol_name", protocol.name);
-    setProtocolItems(protocol.items);
-    // Protocolo propõe, orçamento dispõe: a seleção dele entra marcada e
-    // segue editável abaixo.
-    form.setValue("contract_ids", protocol.contractIds);
-    form.setValue("incluir_tcle_padrao", protocol.incluirTcle);
+    const novo: ProtocoloNoOrcamento = {
+      id: protocol.id,
+      name: protocol.name,
+      contractIds: protocol.contractIds,
+      incluirTcle: protocol.incluirTcle,
+      itens: protocol.items.map((item) => ({
+        ...item,
+        protocoloId: protocol.id,
+        protocoloNome: protocol.name,
+        quantidadeProtocolo: item.quantity,
+        incluido: true,
+      })),
+    };
+    const lista = [...protocolos, novo];
+    setProtocolos(lista);
+    sincronizarCamposDeProtocolo(lista);
+    // Protocolo propõe, orçamento dispõe: os documentos dele entram
+    // marcados, somados aos que já estavam, e seguem editáveis abaixo.
+    const atuais = form.getValues("contract_ids") ?? [];
+    form.setValue("contract_ids", [
+      ...atuais,
+      ...protocol.contractIds.filter((c) => !atuais.includes(c)),
+    ]);
+    if (protocol.incluirTcle) form.setValue("incluir_tcle_padrao", true);
   };
+
+  const onRemoveProtocol = (id: string) => {
+    const removido = protocolos.find((p) => p.id === id);
+    if (!removido) return;
+    const lista = protocolos.filter((p) => p.id !== id);
+    setProtocolos(lista);
+    sincronizarCamposDeProtocolo(lista);
+    // Ajuste clínico de item que saiu do orçamento seria órfão.
+    const refs = new Set(removido.itens.map((i) => i.id));
+    setAjustes((prev) =>
+      Object.fromEntries(Object.entries(prev).filter(([ref]) => !refs.has(ref))),
+    );
+    // Documentos que SÓ este protocolo propunha saem; os que outro protocolo
+    // restante também propõe ficam.
+    const propostosPorOutros = new Set(lista.flatMap((p) => p.contractIds));
+    form.setValue(
+      "contract_ids",
+      (form.getValues("contract_ids") ?? []).filter(
+        (c) => !removido.contractIds.includes(c) || propostosPorOutros.has(c),
+      ),
+    );
+    if (removido.incluirTcle && !lista.some((p) => p.incluirTcle)) {
+      form.setValue("incluir_tcle_padrao", false);
+    }
+  };
+
+  const atualizarItem = (
+    protocoloId: string,
+    ref: string,
+    patch: Partial<Pick<ItemNoOrcamento, "quantity" | "incluido">>,
+  ) =>
+    setProtocolos((prev) =>
+      prev.map((p) =>
+        p.id !== protocoloId
+          ? p
+          : {
+              ...p,
+              itens: p.itens.map((i) => (i.id === ref ? { ...i, ...patch } : i)),
+            },
+      ),
+    );
+
+  const onQuantidadeItem = (protocoloId: string, ref: string, raw: string) => {
+    const n = Math.trunc(Number(raw));
+    if (!Number.isFinite(n)) return;
+    atualizarItem(protocoloId, ref, { quantity: Math.min(999, Math.max(1, n)) });
+  };
+
+  const onRetirarItem = (protocoloId: string, ref: string) => {
+    atualizarItem(protocoloId, ref, { incluido: false });
+    setAjustes((prev) => {
+      if (!(ref in prev)) return prev;
+      const next = { ...prev };
+      delete next[ref];
+      return next;
+    });
+  };
+
+  const onRestaurarItem = (protocoloId: string, ref: string) =>
+    atualizarItem(protocoloId, ref, { incluido: true });
 
   /**
    * Aplica um patch da grade clínica.
@@ -447,7 +551,7 @@ export function OrcamentoForm({
         dose: e.dose,
         inicio_dias: e.inicio_dias,
         cuidados: e.cuidados,
-        etiqueta: "Protocolo",
+        etiqueta: item.protocoloNome,
         ajustado: Boolean(ajustes[item.id]),
       };
     }),
@@ -532,7 +636,7 @@ export function OrcamentoForm({
   const onSubmit = form.handleSubmit((values) => {
     if (protocolItems.length === 0 && values.additional_procedures.length === 0) {
       toast.error(
-        "Adicione pelo menos um procedimento (protocolo base ou extra)",
+        "Adicione pelo menos um procedimento (de protocolo ou extra)",
       );
       return;
     }
@@ -618,6 +722,15 @@ export function OrcamentoForm({
       profissional_sys_user: values.professional_sys_user || undefined,
       protocolo_id: values.protocol_id || null,
       protocolo_nome: values.protocol_name || null,
+      // A escolha; o servidor monta o retrato a partir de `protocol_items`.
+      protocolos: protocolos
+        .map((p) => ({
+          protocolo_id: p.id,
+          itens: p.itens
+            .filter((i) => i.incluido)
+            .map((i) => ({ ref: i.id, quantity: i.quantity })),
+        }))
+        .filter((p) => p.itens.length > 0),
       contract_ids: values.contract_ids,
       incluir_tcle_padrao: values.incluir_tcle_padrao,
       procedimentos: allProcedures,
@@ -956,29 +1069,61 @@ export function OrcamentoForm({
             )}
           </div>
 
-          {/* Protocolo base */}
+          {/* Protocolos */}
           <div>
             <Label className="text-sm font-medium text-muted-foreground">
-              Protocolo base
+              Protocolos
             </Label>
+            {protocolos.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-1">
+                {protocolos.map((p) => (
+                  <span
+                    key={p.id}
+                    className="inline-flex items-center gap-1 rounded-full border bg-primary/10 px-3 py-1 text-sm"
+                  >
+                    {p.name}
+                    <button
+                      type="button"
+                      onClick={() => onRemoveProtocol(p.id)}
+                      className="rounded-full p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      aria-label={`Remover o protocolo ${p.name}`}
+                      title="Remover protocolo"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <Select
-              value={protocolId ?? "none"}
-              onValueChange={onSelectProtocol}
+              key={addProtocoloKey}
+              onValueChange={onAddProtocol}
+              disabled={protocols.every((p) =>
+                protocolos.some((q) => q.id === p.id),
+              )}
             >
-              <SelectTrigger className="mt-1">
-                <SelectValue placeholder="Selecione um protocolo" />
+              <SelectTrigger className="mt-2">
+                <SelectValue
+                  placeholder={
+                    protocolos.length > 0
+                      ? "Adicionar outro protocolo"
+                      : "Adicionar protocolo"
+                  }
+                />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none" className="text-muted-foreground">
-                  Nenhum
-                </SelectItem>
-                {protocols.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
+                {protocols
+                  .filter((p) => !protocolos.some((q) => q.id === p.id))
+                  .map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Quantidades e itens se ajustam ao lado, só neste orçamento.
+            </p>
           </div>
 
           {/* Desconto total */}
@@ -1125,8 +1270,8 @@ export function OrcamentoForm({
               Documentos para assinatura
             </Label>
             <p className="text-xs text-muted-foreground mt-0.5 mb-2">
-              {protocolId
-                ? "Veio do protocolo selecionado. Ajustar aqui não altera o protocolo."
+              {protocolos.length > 0
+                ? "Veio dos protocolos adicionados. Ajustar aqui não altera os protocolos."
                 : "Escolha o que este paciente vai assinar."}
             </p>
             <DocumentosSelector
@@ -1247,62 +1392,139 @@ export function OrcamentoForm({
           </div>
 
           <div className="space-y-3 max-h-[700px] overflow-y-auto pr-1">
-            {protocolItems.length > 0 && (
-              <>
-                <div className="border-b pb-2">
-                  <h3 className="text-sm font-medium text-muted-foreground">
-                    Do protocolo base
-                  </h3>
-                </div>
-                {protocolItems.map((p, idx) => (
-                  <div
-                    key={`pp-${idx}`}
-                    className="bg-primary/10 p-3 rounded-lg border border-primary/20"
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className="font-medium">{p.procedure_name}</h4>
-                      <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded">
-                        Protocolo
+            {protocolos.map((protocolo) => {
+              const incluidos = protocolo.itens.filter((i) => i.incluido);
+              const retirados = protocolo.itens.filter((i) => !i.incluido);
+              const subtotalProtocolo = incluidos.reduce(
+                (sum, i) =>
+                  sum +
+                  i.quantity *
+                    i.value_cents *
+                    (1 - (i.discount_percent ?? 0) / 100),
+                0,
+              );
+              return (
+                <div key={protocolo.id} className="space-y-2">
+                  <div className="flex items-center justify-between gap-2 border-b pb-2">
+                    <h3 className="text-sm font-medium truncate">
+                      {protocolo.name}
+                    </h3>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-sm text-muted-foreground">
+                        {formatCurrency(subtotalProtocolo)}
                       </span>
-                    </div>
-                    <div className="text-sm space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">
-                          Quantidade
-                        </span>
-                        <span>{p.quantity}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">
-                          Valor unitário
-                        </span>
-                        <span>{formatCurrency(p.value_cents)}</span>
-                      </div>
-                      {p.discount_percent > 0 && (
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">
-                            Desconto
-                          </span>
-                          <span>{p.discount_percent}%</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between pt-1 border-t border-border/50">
-                        <span className="text-muted-foreground font-medium">
-                          Subtotal
-                        </span>
-                        <span className="font-semibold">
-                          {formatCurrency(
-                            p.quantity *
-                              p.value_cents *
-                              (1 - (p.discount_percent ?? 0) / 100),
-                          )}
-                        </span>
-                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onRemoveProtocol(protocolo.id)}
+                        className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                        title="Remover protocolo"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
                   </div>
-                ))}
-              </>
-            )}
+                  {incluidos.length === 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      Todos os itens deste protocolo foram retirados.
+                    </p>
+                  )}
+                  {incluidos.map((p) => (
+                    <div
+                      key={p.id}
+                      className="bg-primary/10 p-3 rounded-lg border border-primary/20"
+                    >
+                      <div className="flex justify-between items-start gap-2 mb-2">
+                        <h4 className="font-medium">{p.procedure_name}</h4>
+                        <button
+                          type="button"
+                          onClick={() => onRetirarItem(protocolo.id, p.id)}
+                          className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          aria-label={`Retirar ${p.procedure_name}`}
+                          title="Retirar do orçamento"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div className="text-sm space-y-1">
+                        <div className="flex justify-between items-center gap-2">
+                          <span className="text-muted-foreground">
+                            Quantidade
+                            {p.quantity !== p.quantidadeProtocolo && (
+                              <span className="text-xs">
+                                {" "}
+                                (protocolo: {p.quantidadeProtocolo})
+                              </span>
+                            )}
+                          </span>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={999}
+                            value={p.quantity}
+                            onChange={(e) =>
+                              onQuantidadeItem(protocolo.id, p.id, e.target.value)
+                            }
+                            className="h-8 w-20 text-right"
+                            aria-label={`Quantidade de ${p.procedure_name}`}
+                          />
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">
+                            Valor unitário
+                          </span>
+                          <span>{formatCurrency(p.value_cents)}</span>
+                        </div>
+                        {p.discount_percent > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">
+                              Desconto
+                            </span>
+                            <span>{p.discount_percent}%</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between pt-1 border-t border-border/50">
+                          <span className="text-muted-foreground font-medium">
+                            Subtotal
+                          </span>
+                          <span className="font-semibold">
+                            {formatCurrency(
+                              p.quantity *
+                                p.value_cents *
+                                (1 - (p.discount_percent ?? 0) / 100),
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {retirados.length > 0 && (
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>Retirados deste orçamento:</p>
+                      {retirados.map((r) => (
+                        <div
+                          key={r.id}
+                          className="flex items-center justify-between gap-2"
+                        >
+                          <span className="line-through truncate">
+                            {r.procedure_name}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => onRestaurarItem(protocolo.id, r.id)}
+                            className="inline-flex items-center gap-1 text-primary-blue hover:underline shrink-0"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Restaurar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
             {fields.length > 0 && (
               <div className="border-b pb-2 pt-2">

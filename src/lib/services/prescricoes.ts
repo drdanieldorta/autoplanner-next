@@ -3,6 +3,12 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import { canonicalJson } from "@/lib/prescricao/canonical";
+import {
+  agruparPorProtocolo,
+  combinarTextosDeProtocolos,
+  nomeDosProtocolos,
+  parseItensProtocolo,
+} from "@/lib/orcamento/itens-protocolo";
 import { isVia } from "@/lib/prescricao/enums";
 import { projetarPlano, type ItemCru } from "@/lib/prescricao/project";
 import type {
@@ -91,7 +97,7 @@ export async function loadPrescricaoFonte(args: {
 
   const str = (k: string): string => (proposta[k] as string | null) ?? "";
 
-  // ── Itens: protocolo + procedimentos avulsos ─────────────────────────
+  // ── Itens: protocolo(s) + procedimentos avulsos ──────────────────────
   const protocoloId = (proposta.protocolo_id as string | null) ?? null;
 
   let protocolo: {
@@ -108,7 +114,64 @@ export async function loadPrescricaoFonte(args: {
 
   const itens: ItemCru[] = [];
 
-  if (protocoloId) {
+  // Orçamento novo: retrato `itens_protocolo` — vários protocolos, com a
+  // quantidade escolhida no orçamento e sem os itens retirados. A camada
+  // clínica do retrato é a do protocolo na criação; o desvio deste paciente
+  // continua no delta (`ref` = `protocol_items.id` da época, como sempre).
+  const retrato = parseItensProtocolo(proposta.itens_protocolo);
+
+  if (retrato) {
+    const grupos = agruparPorProtocolo(retrato);
+    if (grupos.length > 0) {
+      // Textos gerais lidos ao vivo, como no caminho antigo. Com UM
+      // protocolo o cabeçalho sai idêntico ao de sempre.
+      const protosResult = await admin
+        .from("protocols")
+        .select("id, cuidados_gerais, sinais_alerta")
+        .in(
+          "id",
+          grupos.map((g) => g.protocolo_id),
+        )
+        .eq("company_id", args.companyId);
+      const textos = new Map(
+        ((protosResult.data ?? []) as Array<{
+          id: string;
+          cuidados_gerais: string | null;
+          sinais_alerta: string | null;
+        }>).map((t) => [t.id, t]),
+      );
+      protocolo = {
+        id: grupos[0].protocolo_id,
+        nome:
+          (proposta.protocolo_nome as string | null) ||
+          nomeDosProtocolos(grupos.map((g) => g.protocolo_nome)),
+        cuidados_gerais: combinarTextosDeProtocolos(
+          grupos.map((g) => ({
+            nome: g.protocolo_nome,
+            texto: textos.get(g.protocolo_id)?.cuidados_gerais ?? null,
+          })),
+        ),
+        sinais_alerta: combinarTextosDeProtocolos(
+          grupos.map((g) => ({
+            nome: g.protocolo_nome,
+            texto: textos.get(g.protocolo_id)?.sinais_alerta ?? null,
+          })),
+        ),
+      };
+    }
+    for (const item of retrato) {
+      itens.push({
+        ref: item.ref,
+        procedure_name: item.procedure_name,
+        quantity: item.quantity,
+        interval_days: item.interval_days,
+        inicio_dias: item.inicio_dias,
+        dose: item.dose,
+        via: item.via,
+        cuidados: item.cuidados,
+      });
+    }
+  } else if (protocoloId) {
     const protoResult = await admin
       .from("protocols")
       .select("id, name, cuidados_gerais, sinais_alerta")

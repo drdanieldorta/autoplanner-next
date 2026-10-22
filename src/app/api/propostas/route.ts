@@ -9,6 +9,7 @@ import { feegow, FeegowError } from "@/lib/integrations/feegow";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { limparAjustes } from "@/lib/prescricao/ajustes";
 import { VIAS } from "@/lib/prescricao/enums";
+import { montarItensProtocolo } from "@/lib/services/orcamento-protocolos";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { prescricaoAjustesSchema } from "@/lib/validations";
 
@@ -58,6 +59,29 @@ const BodySchema = z.object({
 
   protocolo_id: z.string().uuid().nullable().optional(),
   protocolo_nome: z.string().nullable().optional(),
+
+  // Vários protocolos por orçamento (2026-10-22). Só a ESCOLHA vem daqui:
+  // quais protocolos, quais itens e a quantidade de cada um. O resto do
+  // retrato (`itens_protocolo`) é montado no servidor a partir de
+  // `protocol_items`. Ausente = cliente antigo: grava como antes, só com
+  // `protocolo_id`, e os documentos leem o protocolo ao vivo.
+  protocolos: z
+    .array(
+      z.object({
+        protocolo_id: z.string().uuid(),
+        itens: z
+          .array(
+            z.object({
+              ref: z.string().uuid(),
+              quantity: z.number().int().min(1).max(999),
+            }),
+          )
+          .min(1)
+          .max(200),
+      }),
+    )
+    .max(20)
+    .optional(),
 
   // Documentos que o paciente assina. Viram linhas em `proposta_contracts`
   // (na ordem do array) e o booleano do TCLE code-driven. `contract_id`
@@ -129,6 +153,30 @@ export async function POST(req: Request) {
     return jsonError("Payload inválido", 422);
   }
 
+  // Protocolos ANTES da Feegow: um protocolo editado com o formulário aberto
+  // vira 409 aqui, e não uma proposta órfã na Feegow que não se apaga.
+  const montagem = body.protocolos
+    ? await montarItensProtocolo({
+        companyId: auth.user.companyId,
+        protocolos: body.protocolos,
+      })
+    : null;
+  if (montagem && !montagem.ok) {
+    return jsonError(montagem.error, montagem.status);
+  }
+  const retrato = montagem?.ok ? montagem : null;
+
+  // Delta clínico só de itens que estão no orçamento: item retirado (ou de
+  // protocolo retirado) não pode deixar ajuste órfão no JSONB.
+  const ajustesBrutos = body.prescricao_ajustes ?? {};
+  const ajustes = retrato
+    ? Object.fromEntries(
+        Object.entries(ajustesBrutos).filter(([ref]) =>
+          retrato.itens.some((i) => i.ref === ref),
+        ),
+      )
+    : ajustesBrutos;
+
   const creds = await getCompanyCredentials(auth.user.companyId);
   const pacienteDaFeegow =
     body.paciente_id.trim() !== "" && body.paciente_id !== "manual";
@@ -185,8 +233,11 @@ export async function POST(req: Request) {
       profissional_especialidade: body.profissional_especialidade ?? null,
       profissional_crm: body.profissional_crm ?? null,
       profissional_sys_user: body.profissional_sys_user ?? null,
-      protocolo_id: body.protocolo_id ?? null,
-      protocolo_nome: body.protocolo_nome ?? null,
+      protocolo_id: retrato ? retrato.protocoloId : (body.protocolo_id ?? null),
+      protocolo_nome: retrato
+        ? retrato.protocoloNome
+        : (body.protocolo_nome ?? null),
+      itens_protocolo: retrato ? retrato.itens : null,
       incluir_tcle_padrao: body.incluir_tcle_padrao,
       procedimentos_adicionais: body.procedimentos_adicionais ?? [],
       valor_total_cents: body.valor_total_cents,
@@ -200,7 +251,7 @@ export async function POST(req: Request) {
       paciente_alergias: body.paciente_alergias?.trim() || null,
       observacoes: body.observacoes?.trim() || null,
       prescricao_inicio: body.prescricao_inicio ?? null,
-      prescricao_ajustes: limparAjustes(body.prescricao_ajustes ?? {}),
+      prescricao_ajustes: limparAjustes(ajustes),
       id_proposta_api,
       user_id: auth.user.id,
       company_id: auth.user.companyId,

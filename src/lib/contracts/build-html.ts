@@ -9,6 +9,7 @@ import {
   type ProcedimentoLinha,
 } from "@/lib/contracts/custom-doc";
 import { formatBRL, formatCPF, formatDateExtenso } from "@/lib/contracts/render";
+import { parseItensProtocolo } from "@/lib/orcamento/itens-protocolo";
 import {
   buildDefaultContractCss,
   renderDefaultSystemContract,
@@ -124,8 +125,20 @@ export async function buildContractsHtml(args: {
     };
   }
 
-  // Procedimentos: itens do protocolo base (se houver) + adicionais.
+  // Procedimentos: itens de protocolo + adicionais. Orçamento novo traz o
+  // retrato `itens_protocolo` (vários protocolos, quantidade editada, itens
+  // retirados ausentes) — é ele que vale, não o protocolo de hoje. Orçamento
+  // anterior à coluna (null) lê `protocol_items` ao vivo, como sempre leu.
+  const retrato = parseItensProtocolo(proposta.itens_protocolo);
   const protocolItems: LineProc[] = await (async () => {
+    if (retrato) {
+      return retrato.map((i) => ({
+        procedure_name: i.procedure_name,
+        quantity: i.quantity,
+        value_cents: i.value_cents,
+        discount_percent: i.discount_percent,
+      }));
+    }
     if (!proposta.protocolo_id) return [];
     const r = await admin
       .from("protocol_items")

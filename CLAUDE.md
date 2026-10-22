@@ -198,6 +198,7 @@ npm install --legacy-peer-deps
 - [x] **Fase 5.4: Pacientes do CRM no orçamento (fallback sem Feegow)** — empresa sem `feegow_token` e com `crm_token` ganha um combobox que busca contatos etiquetados "Paciente" na Helena/WTS (`POST /contact/filter`, busca do servidor conforme digita via `GET /api/crm/pacientes?q=`). CPF e nascimento vêm de `customFields` quando a conta tem esses campos; o que não vier é digitado nos mesmos inputs do modo manual. CPF e telefone passaram a ser obrigatórios para paciente manual/CRM (form + `envio-manual`). Ver "Pacientes do CRM" abaixo.
 - [x] **Fase 5.5: Modelo de contrato em Markdown + prévia** — `contracts.content` passou a ser Markdown, renderizado por `lib/contracts/custom-doc.ts` (neutro, `marked`) tanto no PDF quanto na prévia ao vivo do editor (`<iframe sandbox srcDoc>`, dados fictícios, marca da empresa). `{{procedimentos}}` sozinha numa linha vira tabela (nome e quantidade, sem valor por item — decisão 2026-10-16); `{{subtotal}}`/`{{desconto}}`/`{{total}}` passaram a refletir o desconto real do orçamento (antes desconto era fixo em R$ 0,00). Ver "Modelo do usuário é Markdown" abaixo.
 - [x] **Fase 5.6: Origem dos pacientes em Configurações** — dropdown em `/configuracao` (`api_credentials.patient_source`: `feegow` padrão, `crm`, `manual`). O padrão reproduz o comportamento anterior (Feegow → CRM → manual conforme as chaves). Só o paciente muda de origem: procedimentos e profissionais seguem da Feegow quando há chave. Sem paciente da Feegow, `POST /api/propostas` não cria proposta lá e o webhook da Authentique não anexa ao prontuário. Ver "Origem dos pacientes no orçamento" abaixo.
+- [x] **Fase 5.7: Vários protocolos por orçamento** — `/orcamentos/novo` aceita uma lista de protocolos; cada item tem quantidade editável e pode ser retirado (e restaurado), só no orçamento. O servidor monta o retrato `propostas.itens_protocolo` a partir de `protocol_items` (`montarItensProtocolo`), e contrato, cronograma e tela de detalhe leem o retrato; orçamento antigo (`itens_protocolo` null) segue lendo o protocolo ao vivo. Ver "Vários protocolos no orçamento" abaixo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
 
 ## Origem dos pacientes no orçamento (Configurações)
@@ -434,6 +435,48 @@ data da última assinatura recebida, que serve de sinal de vida). Domínio:
 conta da Autentique** (formato JSON, os dois eventos) e remover ou trocar o webhook antigo
 do n8n. Enquanto ele existir, as assinaturas continuam indo para lá.
 
+## Vários protocolos no orçamento (retrato dos itens)
+
+Um orçamento pode juntar **vários protocolos**, com a **quantidade de cada item
+ajustada** e **itens retirados** — tudo só naquele orçamento (decisão 2026-10-22).
+O protocolo segue sendo o modelo: nada disso toca `protocol_items`.
+
+**Retrato, não leitura ao vivo.** `propostas.itens_protocolo` (JSONB) guarda um
+elemento por item INCLUÍDO: protocolo de origem, quantidade do orçamento,
+quantidade do protocolo (só para exibir), valor, desconto, intervalo e a camada
+clínica copiada do protocolo na criação. Motivo: `updateProtocol` faz
+delete-then-insert, então os ids dos itens mudam a cada edição do protocolo — uma
+quantidade guardada por id ficaria órfã, e o contrato passaria a mostrar o
+protocolo de hoje em vez do que foi vendido. Formato e leitura tolerante em
+[itens-protocolo.ts](src/lib/orcamento/itens-protocolo.ts) (neutro).
+
+**O servidor monta o retrato.** O formulário manda só a ESCOLHA
+(`protocolos: [{ protocolo_id, itens: [{ ref, quantity }] }]`);
+`montarItensProtocolo` ([orcamento-protocolos.ts](src/lib/services/orcamento-protocolos.ts))
+lê `protocols` (da empresa) e `protocol_items`, e devolve 422 (protocolo
+repetido), 404 (protocolo de outra empresa / apagado) ou **409 quando um item
+escolhido não existe mais** (protocolo editado com o formulário aberto). Roda
+ANTES da proposta da Feegow, para um 409 não deixar proposta órfã lá. O delta
+clínico do payload é filtrado para as refs que entraram no retrato.
+
+**Quem lê o retrato** (null = caminho antigo, intocado): `buildContractsHtml`
+(procedimentos e subtotal do contrato), `loadPrescricaoFonte` (itens e cabeçalho
+do cronograma) e a tela `/orcamentos/[id]` (itens agrupados por protocolo).
+`protocolo_id` grava o PRIMEIRO protocolo e `protocolo_nome` os nomes unidos por
+" + ", só para listagens.
+
+**Cronograma com um protocolo sai idêntico ao antigo** (verificado: mesmo hash
+canônico). Com vários: nome "A + B"; cuidados gerais e sinais de alerta de cada
+protocolo com o nome dele na frente (`combinarTextosDeProtocolos`), lidos ao vivo
+de `protocols` como sempre. A quantidade do orçamento é o número de sessões.
+
+**Documentos:** adicionar um protocolo SOMA os documentos dele à seleção (e marca o
+TCLE se ele propõe); remover tira só os que nenhum protocolo restante propõe.
+
+⚠️ O select de `protocol_items` em `montarItensProtocolo` é explícito: é o **sexto
+lugar** da lista abaixo. Coluna nova que precise chegar ao contrato ou ao
+cronograma de orçamento novo tem que entrar lá também.
+
 ## Cronograma de aplicações (folha de enfermagem)
 
 Segundo documento do sistema, ao lado do contrato. **Derivado, não escrito**:
@@ -483,7 +526,7 @@ sessão"); só via/dose/cuidados vazios são descartados.
 **Camada clínica do avulso.** Procedimento extra não tem linha em
 `protocol_items`, logo não tem modelo do qual desviar: a camada clínica dele
 mora DENTRO de `propostas.procedimentos_adicionais` (JSONB), não no delta.
-Tem sua própria lista de lugares a tocar, paralela à dos "CINCO lugares":
+Tem sua própria lista de lugares a tocar, paralela à dos "SEIS lugares":
 1. `orcamentoProcedureSchema` (`lib/validations.ts`)
 2. os dois `append(...)` em `orcamento-form.tsx`
 3. `ProcedimentoAdicionalSchema` em `api/propostas/route.ts` — **não**
@@ -504,7 +547,7 @@ Tem sua própria lista de lugares a tocar, paralela à dos "CINCO lugares":
   contrato". A folha degrada — imprime "— CONFERIR" — em vez de falhar.
 - **Falha da folha nunca derruba o contrato** — `toast.warning`, nunca rollback.
 
-**Ao adicionar coluna em `protocol_items`, ela precisa entrar em CINCO lugares** ou é
+**Ao adicionar coluna em `protocol_items`, ela precisa entrar em SEIS lugares** ou é
 apagada silenciosamente no primeiro save (delete-then-insert), ou simplesmente nunca
 chega na folha:
 1. `protocolItemSchema` (`lib/validations.ts`)
@@ -514,6 +557,9 @@ chega na folha:
    explícito ali é o de `protocols`
 5. **`lib/services/prescricoes.ts`** — este select de `protocol_items` É explícito, e é o
    que alimenta a folha. Coluna esquecida aqui salva no banco e some do documento.
+6. **`lib/services/orcamento-protocolos.ts`** (`montarItensProtocolo`) — monta o retrato
+   `itens_protocolo` dos orçamentos novos; o select também é explícito, e o tipo
+   `ItemProtocoloOrcamento` + `parseItensProtocolo` precisam do campo.
 
 **Dose (2026-08-07).** É opcional e o documento reage a ela: sem nenhum item com dose, a
 folha sai byte a byte idêntica à de antes da feature — inclusive o rodapé afirmando que
