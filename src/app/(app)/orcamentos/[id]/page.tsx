@@ -5,6 +5,11 @@ import { requireUser } from "@/lib/auth";
 import { getCredentialsStatus } from "@/lib/services/credentials";
 import { getPropostaById } from "@/lib/services/propostas";
 import { getProtocolById } from "@/lib/services/protocols";
+import {
+  agruparPorProtocolo,
+  parseItensProtocolo,
+  subtotalItem,
+} from "@/lib/orcamento/itens-protocolo";
 import { formatCurrency } from "@/lib/currency";
 
 import {
@@ -74,7 +79,12 @@ export default async function OrcamentoPage({
   const credStatus = await getCredentialsStatus({ companyId: user.companyId });
   const temFeegow = credStatus?.hasFeegow ?? true;
 
-  const protocol = proposta.protocolo_id
+  // Orçamento novo: retrato dos itens (vários protocolos, quantidade do
+  // orçamento). Antigo (null): o protocolo ao vivo, como sempre.
+  const retrato = parseItensProtocolo(proposta.itens_protocolo);
+  const gruposProtocolo = retrato ? agruparPorProtocolo(retrato) : [];
+
+  const protocol = !retrato && proposta.protocolo_id
     ? await getProtocolById({
         id: proposta.protocolo_id,
         companyId: user.companyId,
@@ -147,7 +157,9 @@ export default async function OrcamentoPage({
 
             {proposta.protocolo_nome && (
               <div>
-                <p className="text-sm text-muted-foreground">Protocolo base</p>
+                <p className="text-sm text-muted-foreground">
+                  {gruposProtocolo.length > 1 ? "Protocolos" : "Protocolo base"}
+                </p>
                 <p className="font-medium">{proposta.protocolo_nome}</p>
               </div>
             )}
@@ -213,6 +225,42 @@ export default async function OrcamentoPage({
                 initialStatusId={proposta.status_id}
               />
             </div>
+
+            {gruposProtocolo.map((grupo) => (
+              <div key={grupo.protocolo_id}>
+                <p className="text-sm text-muted-foreground mb-2">
+                  {grupo.protocolo_nome}
+                </p>
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {grupo.itens.map((item) => (
+                    <div
+                      key={item.ref}
+                      className="p-3 bg-muted/30 rounded-lg border-l-4 border-primary"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="font-medium">{item.procedure_name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            Quantidade: {item.quantity}
+                            {item.quantity !== item.quantity_protocolo &&
+                              ` (protocolo: ${item.quantity_protocolo})`}{" "}
+                            | Intervalo: {item.interval_days} dias
+                          </p>
+                          {item.discount_percent > 0 && (
+                            <p className="text-sm text-muted-foreground">
+                              Desconto: {item.discount_percent}%
+                            </p>
+                          )}
+                        </div>
+                        <p className="font-semibold">
+                          {formatCurrency(subtotalItem(item))}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
 
             {protocol && protocol.items.length > 0 && (
               <div>

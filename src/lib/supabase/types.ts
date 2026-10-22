@@ -3975,6 +3975,7 @@ export type Database = {
           incluir_tcle_padrao: boolean
           installment_value_cents: number | null
           installments: number | null
+          itens_protocolo: Json | null
           observacoes: string | null
           paciente_alergias: string | null
           paciente_bairro: string | null
@@ -4029,6 +4030,7 @@ export type Database = {
           incluir_tcle_padrao?: boolean
           installment_value_cents?: number | null
           installments?: number | null
+          itens_protocolo?: Json | null
           observacoes?: string | null
           paciente_alergias?: string | null
           paciente_bairro?: string | null
@@ -4083,6 +4085,7 @@ export type Database = {
           incluir_tcle_padrao?: boolean
           installment_value_cents?: number | null
           installments?: number | null
+          itens_protocolo?: Json | null
           observacoes?: string | null
           paciente_alergias?: string | null
           paciente_bairro?: string | null

@@ -1,6 +1,8 @@
 import { CheckCircle, Settings, XCircle } from "lucide-react";
 
+import { getAutentiqueWebhookUrl } from "@/lib/app-url";
 import { requireUser } from "@/lib/auth";
+import { getUltimaAssinaturaRecebida } from "@/lib/services/autentique-webhook";
 import { getCredentialsStatus } from "@/lib/services/credentials";
 import { getCompanyBranding } from "@/lib/branding/document";
 
@@ -14,6 +16,7 @@ import { PageHeader } from "../_components/page-header";
 import { ConfiguracaoForm } from "./_components/configuracao-form";
 import { BrandingForm } from "./_components/branding-form";
 import { PatientSourceForm } from "./_components/patient-source-form";
+import { AutentiqueWebhookCard } from "./_components/autentique-webhook-card";
 
 export const metadata = { title: "Configuração · InfinitePlan" };
 export const dynamic = "force-dynamic";
@@ -53,9 +56,17 @@ export default async function ConfiguracaoPage() {
     );
   }
 
-  const [status, branding] = await Promise.all([
-    getCredentialsStatus({ companyId: user.companyId }),
-    getCompanyBranding(user.companyId),
+  const companyId = user.companyId;
+  const [status, branding, webhookUrl, ultimaAssinatura] = await Promise.all([
+    getCredentialsStatus({ companyId }),
+    getCompanyBranding(companyId),
+    getAutentiqueWebhookUrl(),
+    // Sinal de vida do webhook: falha aqui não derruba a página, e vira
+    // "não foi possível consultar" (undefined), nunca "nenhuma recebida".
+    getUltimaAssinaturaRecebida({ companyId }).catch((err: unknown) => {
+      console.error("[/configuracao] Falha ao consultar última assinatura:", err);
+      return undefined;
+    }),
   ]);
 
   return (
@@ -137,6 +148,11 @@ export default async function ConfiguracaoPage() {
         hasAuthentique={status?.hasAuthentique ?? false}
         hasCrm={status?.hasCrm ?? false}
         hasCrmAdmin={status?.hasCrmAdmin ?? false}
+      />
+
+      <AutentiqueWebhookCard
+        url={webhookUrl}
+        ultimaAssinatura={ultimaAssinatura}
       />
     </div>
   );

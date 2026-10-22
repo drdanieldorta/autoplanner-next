@@ -79,6 +79,7 @@ export default async function NovoOrcamentoPage() {
         hasCrm={formData.hasCrm}
         crmError={formData.crmError}
         crmHasMore={formData.crmHasMore}
+        feegowHasMore={formData.feegowHasMore}
         procedures={formData.procedures}
         patients={formData.patients}
         professionals={formData.professionals}

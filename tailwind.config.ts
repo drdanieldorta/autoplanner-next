@@ -70,6 +70,13 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Fundo de Popover, Command (dropdowns com busca), DropdownMenu e
+        // Tooltip. Sem este token `bg-popover` não gera CSS e esses painéis
+        // ficam transparentes, com o texto da página aparecendo por trás.
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
         surface: {
           DEFAULT: "hsl(var(--surface))",
           foreground: "hsl(var(--surface-foreground))",
