@@ -23,8 +23,22 @@ const TTL_MS = 5 * 60_000;
 const REFRESH_IF_EMPTY_MS = 60_000;
 export const FEEGOW_PATIENT_PAGE_SIZE = 20;
 
-type Entry = { at: number; promise: Promise<FeegowPatient[]> };
-const cache = new Map<string, Entry>();
+type Entry = {
+  /** Quando a lista CHEGOU (antes de chegar: quando o carregamento começou). */
+  at: number;
+  promise: Promise<FeegowPatient[]>;
+  /** Recarga em curso após uma busca sem resultado (não substitui a lista ainda). */
+  refresh?: Promise<FeegowPatient[]>;
+};
+
+// globalThis, não um Map no módulo: a página (bundle SSR) e as rotas /api
+// (outro bundle) recebem CÓPIAS separadas deste módulo no Next. Um Map de
+// módulo fazia o pré-carregamento da página encher um cache que a busca do
+// dropdown nunca lia, e a primeira busca recarregava a lista inteira.
+const store = globalThis as typeof globalThis & {
+  __feegowPatientsCache?: Map<string, Entry>;
+};
+const cache = (store.__feegowPatientsCache ??= new Map<string, Entry>());
 
 function cacheKey(companyId: string, token: string): string {
   // O token entra só como hash: trocar a chave na Configuração não pode
@@ -33,22 +47,51 @@ function cacheKey(companyId: string, token: string): string {
   return `${companyId}:${tokenHash}`;
 }
 
-function load(
-  companyId: string,
-  token: string,
-  opts: { force?: boolean } = {},
-): Entry {
+function load(companyId: string, token: string): Entry {
   const key = cacheKey(companyId, token);
   const hit = cache.get(key);
-  if (!opts.force && hit && Date.now() - hit.at < TTL_MS) return hit;
+  if (hit && Date.now() - hit.at < TTL_MS) return hit;
   const promise = feegow(token).listAllPatients();
   const entry: Entry = { at: Date.now(), promise };
   cache.set(key, entry);
-  // Falha não fica em cache: a próxima busca tenta de novo.
-  promise.catch(() => {
-    if (cache.get(key) === entry) cache.delete(key);
-  });
+  promise.then(
+    // A idade conta de quando a lista CHEGOU: uma listagem lenta não pode
+    // nascer "velha" e disparar recarga a cada busca sem resultado.
+    () => {
+      entry.at = Date.now();
+    },
+    // Falha não fica em cache: a próxima busca tenta de novo.
+    () => {
+      if (cache.get(key) === entry) cache.delete(key);
+    },
+  );
   return entry;
+}
+
+/**
+ * Recarga depois de uma busca sem resultado. A lista em cache continua
+ * valendo enquanto a nova não chega (buscas simultâneas não esperam), e só
+ * é trocada se a recarga der certo — uma Feegow instável não pode apagar
+ * uma lista boa. Uma recarga por vez por entrada.
+ */
+function refresh(companyId: string, token: string, stale: Entry): Promise<FeegowPatient[]> {
+  const key = cacheKey(companyId, token);
+  if (!stale.refresh) {
+    const promise = feegow(token).listAllPatients();
+    stale.refresh = promise;
+    promise.then(
+      () => {
+        if (cache.get(key) === stale) {
+          cache.set(key, { at: Date.now(), promise });
+        }
+        stale.refresh = undefined;
+      },
+      () => {
+        stale.refresh = undefined;
+      },
+    );
+  }
+  return stale.refresh;
 }
 
 /** Sem acento, sem caixa, espaços colapsados. */
@@ -102,8 +145,14 @@ export async function searchFeegowPatients(args: {
     args.q.trim() &&
     Date.now() - entry.at > REFRESH_IF_EMPTY_MS
   ) {
-    const fresh = load(args.companyId, args.token, { force: true });
-    achados = filtrarPacientes(await fresh.promise, args.q);
+    try {
+      achados = filtrarPacientes(
+        await refresh(args.companyId, args.token, entry),
+        args.q,
+      );
+    } catch {
+      // Feegow instável na recarga: vale a lista em cache, que não achou ninguém.
+    }
   }
   return {
     items: achados.slice(0, FEEGOW_PATIENT_PAGE_SIZE),

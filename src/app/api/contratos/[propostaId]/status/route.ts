@@ -9,6 +9,7 @@ import {
   authentique,
   type DocumentSignatureStatus,
 } from "@/lib/integrations/authentique";
+import { pacienteDaFeegow, situacaoDoAnexo } from "@/lib/contracts/feegow-anexo";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -66,8 +67,10 @@ export async function GET(
   // pendente, recusado, ou assinado antes da coluna existir. Também
   // quando falta o link (contratos anteriores ao acervo).
   const needsLiveCheck = !signedAt && !!documentId;
+  const creds = documentId
+    ? await getCompanyCredentials(auth.user.companyId)
+    : null;
   if (needsLiveCheck || (documentId && !storedLink)) {
-    const creds = await getCompanyCredentials(auth.user.companyId);
     if (creds?.authentique_token) {
       try {
         const info = await authentique(
@@ -88,9 +91,29 @@ export async function GET(
     }
   }
 
+  // Anexo do contrato assinado no prontuário da Feegow
+  // (`lib/contracts/feegow-anexo.ts`). `aplicavel` = a empresa tem Feegow E
+  // o paciente é de lá; senão a tela explica por que não há anexo.
+  const empresaTemFeegow = !!creds?.feegow_token;
+  const pacienteComProntuario = !!pacienteDaFeegow(
+    proposta.paciente_id as string | null,
+  );
+  const feegow = {
+    empresaTemFeegow,
+    pacienteComProntuario,
+    aplicavel: empresaTemFeegow && pacienteComProntuario && !!creds?.authentique_token,
+    ...situacaoDoAnexo({
+      contract_feegow_em: (proposta.contract_feegow_em as string | null) ?? null,
+      contract_feegow_iniciado_em:
+        (proposta.contract_feegow_iniciado_em as string | null) ?? null,
+      contract_feegow_erro: (proposta.contract_feegow_erro as string | null) ?? null,
+    }),
+  };
+
   return NextResponse.json({
     documentId,
     sentAt,
+    feegow,
     status,
     signedAt: effectiveSignedAt,
     viewedAt,

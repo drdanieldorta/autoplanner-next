@@ -147,6 +147,14 @@ export async function POST(req: Request) {
         contract_pdf_path: pdfPath,
         contract_sent_at: new Date().toISOString(),
         contract_signing_link: signingLink,
+        // Documento novo: assinatura e anexo na Feegow são do documento, não
+        // do orçamento. Sem zerar, o webhook do documento novo não carimbava
+        // (o carimbo antigo continuava lá) e nunca anexava, e o card mostrava
+        // "Assinado" para um contrato que acabou de ser reenviado.
+        contract_signed_at: null,
+        contract_feegow_em: null,
+        contract_feegow_iniciado_em: null,
+        contract_feegow_erro: null,
       } as never)
       .eq("id", body.proposta_id);
     if (updateResult.error) {

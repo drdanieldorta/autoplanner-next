@@ -127,16 +127,20 @@ export function ClinicalGrid({
                     </span>
                   )}
                 </p>
+              </div>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                {/* Etiqueta na linha de baixo, não ao lado do nome: com
+                    vários protocolos ela é o NOME do protocolo, e ao lado
+                    do nome (shrink-0) tomava a célula inteira. */}
                 {item.etiqueta && (
                   <Badge
                     variant="secondary"
-                    className="text-[10px] font-normal shrink-0"
+                    className="text-[10px] font-normal max-w-full min-w-0"
+                    title={item.etiqueta}
                   >
-                    {item.etiqueta}
+                    <span className="truncate">{item.etiqueta}</span>
                   </Badge>
                 )}
-              </div>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
                 {!item.via && (
                   <Badge variant="outline" className="text-[10px] font-normal">
                     sem via

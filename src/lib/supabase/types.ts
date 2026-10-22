@@ -3963,6 +3963,9 @@ export type Database = {
           company_id: string
           contract_id: string | null
           contract_pdf_path: string | null
+          contract_feegow_em: string | null
+          contract_feegow_erro: string | null
+          contract_feegow_iniciado_em: string | null
           contract_sent_at: string | null
           contract_signed_at: string | null
           contract_signing_link: string | null
@@ -4018,6 +4021,9 @@ export type Database = {
           company_id: string
           contract_id?: string | null
           contract_pdf_path?: string | null
+          contract_feegow_em?: string | null
+          contract_feegow_erro?: string | null
+          contract_feegow_iniciado_em?: string | null
           contract_sent_at?: string | null
           contract_signed_at?: string | null
           contract_signing_link?: string | null
@@ -4073,6 +4079,9 @@ export type Database = {
           company_id?: string
           contract_id?: string | null
           contract_pdf_path?: string | null
+          contract_feegow_em?: string | null
+          contract_feegow_erro?: string | null
+          contract_feegow_iniciado_em?: string | null
           contract_sent_at?: string | null
           contract_signed_at?: string | null
           contract_signing_link?: string | null

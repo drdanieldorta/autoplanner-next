@@ -254,6 +254,13 @@ não queremos dado de paciente persistido lá. Busca que não acha nada com a li
 com mais de 1 minuto recarrega uma vez (paciente recém-cadastrado). Casa
 todas as palavras no nome (sem acento/caixa), e-mail, ou telefone (4+ dígitos).
 
+⚠️ O cache mora em **`globalThis`**, não num `Map` do módulo: a página (bundle SSR) e
+as rotas `/api` (outro bundle) recebem CÓPIAS separadas do módulo no Next, e um `Map`
+de módulo fazia o pré-carregamento da página encher um cache que a busca nunca lia.
+A idade da lista conta de quando ela CHEGA, e a recarga após busca sem resultado
+**não apaga a lista boa**: buscas simultâneas seguem usando a atual, e se a recarga
+falhar (Feegow instável) a lista em cache continua valendo.
+
 O formulário abre esperando a lista no máximo 3s; clínica grande na primeira vez
 abre com o dropdown vazio ("Digite para buscar") e `after()` mantém o
 carregamento vivo para a busca achar o cache. O dropdown de Feegow e o do CRM são
@@ -423,17 +430,39 @@ assinaram. Sem isso, quem soubesse um id de documento marcaria o contrato como a
 e dispararia um anexo irreversível na Feegow. Empresa sem `authentique_token` → 200
 `ignored`; consulta falhou (`status: null`) → 503.
 
-**Carimbo idempotente, anexo único.** O `update` só grava se `contract_signed_at` for
-nulo (com o `signedAt` da Autentique) e usa `.select("id")` para saber se foi ESTA
-requisição que carimbou. O anexo na Feegow só roda nela: `signature.accepted` e
-`document.finished` chegam para o mesmo documento, e a Feegow não expõe delete de anexo.
+**Carimbo idempotente.** O `update` só grava se `contract_signed_at` for nulo (com o
+`signedAt` da Autentique). **Reenviar o contrato zera** `contract_signed_at` e o estado do
+anexo (`envio-manual`): assinatura e anexo são do DOCUMENTO, não do orçamento — sem zerar,
+o documento novo nunca carimbava nem anexava, e o card mostrava "Assinado" para um
+contrato recém-reenviado.
+
+**Anexo no prontuário com estado próprio (2026-10-22)** —
+[feegow-anexo.ts](src/lib/contracts/feegow-anexo.ts), usado pelo webhook (automático,
+assim que o paciente assina) e pelo botão "Enviar ao prontuário" do card do contrato:
+`contract_feegow_em` (anexado), `contract_feegow_iniciado_em` (envio em curso) e
+`contract_feegow_erro` (última falha). Antes o anexo era amarrado ao carimbo — só a
+requisição que carimbava anexava —, então uma Feegow fora do ar naquele instante perdia o
+anexo para sempre, sem registro. Agora:
+- o evento seguinte (`document.finished` depois de `signature.accepted`) tenta de novo;
+- **trava otimista** em `contract_feegow_iniciado_em` (só quem troca o valor que leu envia):
+  dois eventos juntos, ou um clique durante o automático, não anexam duas vezes;
+- envio que começou há mais de 10 min e nunca confirmou nem falhou fica **"em dúvida"**: o
+  automático não reenvia, e o botão só reenvia com confirmação ("confira o prontuário"),
+  porque a Feegow não tem delete de anexo;
+- o webhook responde **200 mesmo quando o anexo falha** (a falha fica no orçamento e na
+  tela). 5xx faria a Autentique reenviar, mas uma falha permanente viraria fila de
+  reenvios e poderia desativar o webhook da clínica;
+- o botão manual confirma a assinatura na Autentique antes de enviar e, se o contrato foi
+  assinado antes de o webhook existir, registra `contract_signed_at` de passagem.
+Paciente digitado ou do CRM não tem prontuário: `nao_aplicavel`, e o card diz isso.
 
 **A URL fica em `/configuracao`** (card "Webhook da Autentique", com passo a passo e a
 data da última assinatura recebida, que serve de sinal de vida). Domínio:
 `VERCEL_PROJECT_PRODUCTION_URL` ou, fora da Vercel, os headers da requisição
 ([app-url.ts](src/lib/app-url.ts)). **Cada clínica precisa cadastrar a URL na própria
 conta da Autentique** (formato JSON, os dois eventos) e remover ou trocar o webhook antigo
-do n8n. Enquanto ele existir, as assinaturas continuam indo para lá.
+do n8n. Com os dois ativos, o n8n também anexa o PDF e o prontuário fica com o contrato
+duplicado.
 
 ## Vários protocolos no orçamento (retrato dos itens)
 
@@ -472,6 +501,11 @@ de `protocols` como sempre. A quantidade do orçamento é o número de sessões.
 
 **Documentos:** adicionar um protocolo SOMA os documentos dele à seleção (e marca o
 TCLE se ele propõe); remover tira só os que nenhum protocolo restante propõe.
+
+**Quantidade e itens retirados.** Quantidade sem teto (o protocolo também não tem);
+o campo guarda o texto enquanto a pessoa digita e só repassa inteiro ≥ 1. Retirar um
+item NÃO apaga o ajuste clínico dele — restaurar traz de volta; só os itens incluídos
+vão no payload, e o servidor filtra de novo.
 
 ⚠️ O select de `protocol_items` em `montarItensProtocolo` é explícito: é o **sexto
 lugar** da lista abaixo. Coluna nova que precise chegar ao contrato ou ao
