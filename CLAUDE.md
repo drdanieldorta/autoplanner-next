@@ -443,15 +443,24 @@ assim que o paciente assina) e pelo botão "Enviar ao prontuário" do card do co
 `contract_feegow_erro` (última falha). Antes o anexo era amarrado ao carimbo — só a
 requisição que carimbava anexava —, então uma Feegow fora do ar naquele instante perdia o
 anexo para sempre, sem registro. Agora:
-- o evento seguinte (`document.finished` depois de `signature.accepted`) tenta de novo;
-- **trava otimista** em `contract_feegow_iniciado_em` (só quem troca o valor que leu envia):
-  dois eventos juntos, ou um clique durante o automático, não anexam duas vezes;
-- envio que começou há mais de 10 min e nunca confirmou nem falhou fica **"em dúvida"**: o
-  automático não reenvia, e o botão só reenvia com confirmação ("confira o prontuário"),
-  porque a Feegow não tem delete de anexo;
-- o webhook responde **200 mesmo quando o anexo falha** (a falha fica no orçamento e na
-  tela). 5xx faria a Autentique reenviar, mas uma falha permanente viraria fila de
-  reenvios e poderia desativar o webhook da clínica;
+- **tudo preso ao DOCUMENTO**: leitura, trava e gravações filtram por `document_id`, e o
+  webhook passa o documento que ELE confirmou como assinado (`documentoConfirmado`). Sem
+  isso, um reenvio no meio do caminho fazia subir o contrato novo (não assinado) como
+  "Contrato assinado", ou marcava o novo como já anexado e o assinado nunca chegava;
+- **trava otimista** em `contract_feegow_iniciado_em` (só quem troca o valor que leu envia);
+- o evento seguinte (`document.finished` depois de `signature.accepted`) tenta de novo
+  depois de uma falha CERTA; o evento que chega enquanto o outro envia recebe **503**
+  (`em_andamento`) para a Autentique reenviá-lo — a trava impede o duplo na volta;
+- **"em dúvida"** quando não dá para saber se o arquivo chegou: trava antiga (>10 min) sem
+  conclusão, ou o POST à Feegow falhou de um jeito que não exclui que ela tenha gravado
+  (rede, 5xx — só `success: false` e 4xx são recusa certa). O automático não reenvia; o
+  botão só com confirmação ("confira o prontuário"), porque a Feegow não tem delete;
+- **sem registro nenhum** (assinado antes deste controle, quando o n8n pode ter anexado):
+  o automático envia (é quem acabou de assinar), mas o botão pede a mesma confirmação
+  (`sem_registro`, 409 sem `confirmar_duplicata`);
+- fora o `em_andamento`, o webhook responde **200 mesmo quando o anexo falha** (a falha
+  fica no orçamento e na tela). 5xx para falha permanente viraria fila de reenvios e
+  poderia desativar o webhook da clínica;
 - o botão manual confirma a assinatura na Autentique antes de enviar e, se o contrato foi
   assinado antes de o webhook existir, registra `contract_signed_at` de passagem.
 Paciente digitado ou do CRM não tem prontuário: `nao_aplicavel`, e o card diz isso.
@@ -639,6 +648,7 @@ como HTTP 200 com `{"success": false}`. O `fetcher` genérico só lança em `!re
 - **Mutations Supabase quebram com type "never"** no SDK atual + types gerados PostgrestVersion 13.0.5. Padrão: `.insert(payload as never)`, `.update(payload as never)`, `.upsert(payload as never)`. Quando regerarmos os types via `npm run types:supabase`, isso pode parar.
 - **Turbopack panic com CSS** em paths com espaços no Windows pode acontecer (ex: `Projetos Claude\`). Solução: `rm -rf .next` e relaunch, ou rodar com webpack via env. Build de produção não é afetado.
 - **RHF `form.watch()` viola `react-hooks/incompatible-library`.** Usar `// eslint-disable-next-line react-hooks/incompatible-library` na linha. É padrão idiomático do RHF.
+- **Radix Select com `value=""` fixo (seletor de "adicionar"):** com o seletor FECHADO, letra digitada vira busca e chama `onValueChange` com o primeiro item que casa — cada letra adicionaria um item. Barrar teclas imprimíveis no `onKeyDown` do `SelectTrigger` (ver "Adicionar protocolo" em `orcamento-form.tsx`).
 - **Toda cor de `globals.css` usada como classe precisa estar em `tailwind.config.ts`.** `--popover` existia no CSS mas não no config: `bg-popover` não gerava nada e todo Popover/Command/DropdownMenu/Tooltip ficava transparente, com o texto da página aparecendo por trás (corrigido 2026-10-22).
 - **Client Components não podem importar de arquivos com `import "server-only"`.** Quando precisar compartilhar uma constante (ex: `CONTRACT_VARIABLES`), extrair para arquivo neutro em `lib/<dominio>/variables.ts`.
 

@@ -189,15 +189,28 @@ export async function POST(req: Request) {
   // digitado ou do CRM (`paciente_id: "manual"`) e empresa sem Feegow
   // voltam `nao_aplicavel`.
   //
-  // Sempre 200: falha do anexo fica registrada no orçamento (a tela mostra e
-  // oferece "Tentar de novo"). Responder 5xx faria a Autentique reenviar, mas
-  // uma falha permanente (paciente inexistente na Feegow) viraria uma fila de
+  // `documentoConfirmado`: o anexo só sai para o documento que ESTA rota
+  // acabou de confirmar como assinado — se o contrato foi reenviado no meio
+  // do caminho, o documento novo (ainda não assinado) não sobe.
+  //
+  // 200 para falha do anexo: ela fica registrada no orçamento (a tela mostra
+  // e oferece "Tentar de novo"). 5xx faria a Autentique reenviar, mas uma
+  // falha permanente (paciente inexistente na Feegow) viraria uma fila de
   // reenvios e poderia levar a Autentique a desativar o webhook da clínica.
+  // A exceção é `em_andamento` (o outro evento do mesmo documento está
+  // enviando agora): 503, para este voltar e tentar de novo caso aquele
+  // falhe. A trava impede o anexo duplo na volta.
   const anexo = await anexarContratoAssinadoNaFeegow({
     propostaId: proposta.id,
     companyId: proposta.company_id,
-    assinaturaConfirmada: true,
+    documentoConfirmado: documentId,
   });
+  if (anexo.status === "em_andamento") {
+    return NextResponse.json(
+      { ok: false, stamped: carimbouAgora, feegow: anexo.status },
+      { status: 503 },
+    );
+  }
 
   return NextResponse.json({
     ok: true,

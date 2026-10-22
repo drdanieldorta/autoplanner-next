@@ -71,6 +71,16 @@ export async function POST(
         },
         { status: 409 },
       );
+    case "sem_registro":
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "sem_registro",
+          error:
+            "Não há registro de envio deste contrato ao prontuário. Ele pode ter sido anexado pelo sistema antigo: confira lá antes de enviar.",
+        },
+        { status: 409 },
+      );
     case "erro":
       return jsonError(r.mensagem, 502);
   }

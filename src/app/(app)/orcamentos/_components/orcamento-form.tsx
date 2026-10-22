@@ -1097,7 +1097,25 @@ export function OrcamentoForm({
                 protocolos.some((q) => q.id === p.id),
               )}
             >
-              <SelectTrigger className="mt-2">
+              <SelectTrigger
+                className="mt-2"
+                // Com o seletor FECHADO, o Radix trata letra digitada como
+                // busca e chama onValueChange com o primeiro item que casa.
+                // Com value="" cada nova letra adicionaria mais um protocolo
+                // ("bot" → Bioestimulador, Botox, Botox Premium). Aberto, a
+                // busca na lista continua funcionando.
+                onKeyDown={(e) => {
+                  if (
+                    e.key.length === 1 &&
+                    e.key !== " " &&
+                    !e.ctrlKey &&
+                    !e.altKey &&
+                    !e.metaKey
+                  ) {
+                    e.preventDefault();
+                  }
+                }}
+              >
                 <SelectValue
                   placeholder={
                     protocolos.length > 0

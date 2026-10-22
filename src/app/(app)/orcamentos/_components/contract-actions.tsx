@@ -64,6 +64,8 @@ type ContractStatus = {
     erro: string | null;
     emAndamento: boolean;
     emDuvida: boolean;
+    /** Nada gravado: assinado antes deste controle (o n8n pode ter anexado). */
+    semRegistro: boolean;
   };
 };
 
@@ -324,7 +326,7 @@ export function ContractActions({ propostaId, documentId }: Props) {
           <FeegowRow
             feegow={status.feegow}
             assinado={status.status === "signed"}
-            sending={sendingFeegow}
+            sending={sendingFeegow || isPending}
             onSend={() => sendToFeegow(false)}
             onConfirmDuplicate={() => setConfirmingDuplicate(true)}
           />
@@ -342,11 +344,12 @@ export function ContractActions({ propostaId, documentId }: Props) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reenviar ao prontuário?</AlertDialogTitle>
+            <AlertDialogTitle>Enviar ao prontuário?</AlertDialogTitle>
             <AlertDialogDescription>
-              Um envio anterior começou e não confirmou. O contrato pode já
-              estar no prontuário da Feegow, e a Feegow não permite apagar
-              anexo. Confira o prontuário do paciente antes de reenviar.
+              Não há confirmação de que este contrato está no prontuário: ele
+              pode já ter sido anexado pelo sistema antigo (n8n) ou por um
+              envio que não confirmou. A Feegow não permite apagar anexo.
+              Confira o prontuário do paciente antes de enviar.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -358,7 +361,7 @@ export function ContractActions({ propostaId, documentId }: Props) {
                 void sendToFeegow(true);
               }}
             >
-              Conferi, reenviar
+              Conferi, enviar
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -454,8 +457,10 @@ function FeegowRow({
     conteudo = <span className="text-muted-foreground">Enviando...</span>;
   } else if (feegow.emDuvida) {
     conteudo = (
-      <div className="flex flex-col items-end gap-1 text-right">
-        <span className="text-warning">Envio não confirmado</span>
+      <div className="flex flex-col items-end gap-1 text-right min-w-0">
+        <span className="text-warning break-words" title={feegow.erro ?? undefined}>
+          Envio não confirmado
+        </span>
         {botao("Reenviar", onConfirmDuplicate)}
       </div>
     );
@@ -469,10 +474,12 @@ function FeegowRow({
       </div>
     );
   } else if (assinado) {
+    // Assinado sem nenhum registro de envio: pode ter sido anexado pelo
+    // sistema antigo (n8n). Enviar pede confirmação, como o "em dúvida".
     conteudo = (
       <div className="flex flex-col items-end gap-1 text-right">
-        <span className="text-muted-foreground">Ainda não anexado</span>
-        {botao("Enviar ao prontuário", onSend)}
+        <span className="text-muted-foreground">Sem registro de envio</span>
+        {botao("Enviar ao prontuário", onConfirmDuplicate)}
       </div>
     );
   } else {
