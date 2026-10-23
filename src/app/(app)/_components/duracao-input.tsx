@@ -10,7 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { addDiasISO } from "@/lib/prescricao/project";
+import {
+  addDiasISO,
+  alinharAoDiaDeAtendimento,
+} from "@/lib/prescricao/project";
 import { cn } from "@/lib/utils";
 
 /**
@@ -54,6 +57,7 @@ export function DuracaoInput({
   value,
   onChange,
   inicio,
+  alinharSemana = false,
   id,
   className,
 }: {
@@ -62,6 +66,11 @@ export function DuracaoInput({
   onChange: (dias: number) => void;
   /** yyyy-MM-dd do D0, quando conhecido — resolve o offset para data real. */
   inicio?: string | null;
+  /**
+   * A data resolvida é a do dia de atendimento, como o cronograma faz.
+   * O valor gravado continua o digitado: o arredondamento é do cronograma.
+   */
+  alinharSemana?: boolean;
   id?: string;
   className?: string;
 }) {
@@ -79,6 +88,11 @@ export function DuracaoInput({
 
   const aplicar = (n: number, u: Unidade) =>
     onChange(Math.max(0, Math.trunc(n)) * FATOR[u]);
+
+  // Mesma conta do cronograma impresso. Sem ela o hint diria "10 dias ·
+  // 13/11" e a folha agendaria em 10/11.
+  const alvo = alinharSemana ? alinharAoDiaDeAtendimento(dias) : dias;
+  const desvio = alvo - dias;
 
   return (
     <div className={className}>
@@ -123,7 +137,18 @@ export function DuracaoInput({
             {/* O "= N dias" só aparece quando a unidade escondeu o número
                 real — em "10 dias" repetir seria ruído. */}
             {unidade !== "dias" && <>{dias} dias · </>}
-            {inicio ? brData(addDiasISO(inicio, dias)) : `D+${dias}`}
+            {inicio
+              ? brData(addDiasISO(inicio, alvo))
+              : alvo === 0
+                ? "D0"
+                : `D+${alvo}`}
+            {desvio !== 0 && (
+              <>
+                {" "}
+                · {Math.abs(desvio)} {Math.abs(desvio) === 1 ? "dia" : "dias"}{" "}
+                {desvio < 0 ? "antes" : "depois"}, no dia de atendimento
+              </>
+            )}
           </>
         )}
       </p>

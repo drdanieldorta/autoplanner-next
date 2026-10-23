@@ -7,6 +7,7 @@ import {
 } from "@/lib/branding/document";
 import { resolveDocPalette } from "@/lib/branding/palette";
 import { VIA_CURTA } from "@/lib/prescricao/enums";
+import { diaDaSemana } from "@/lib/prescricao/project";
 import type { PlanoExecucao } from "@/lib/prescricao/types";
 
 /**
@@ -321,6 +322,14 @@ export function renderFolhaExecucao(
         .join("")
     : `<tr><td colspan="5" style="text-align:center;color:#9ca3af;font-style:italic;padding:10px 0;">Sem aplicações projetadas</td></tr>`;
 
+  // Dia de atendimento: as datas da agenda não batem com "a cada N dias" da
+  // tabela de itens quando foram arredondadas, e a enfermagem precisa saber
+  // por quê. Só aparece quando alguma data de fato mudou, então folha sem a
+  // regra (ou com todo intervalo em semanas) sai idêntica.
+  const notaAgenda = plano.itens.some((i) => i.sessoes.some((x) => x.alinhada))
+    ? `<div style="font-size:9px;color:#555;margin:0 0 3px 0">Datas no dia de atendimento (${escapeHtml(diaDaSemana(plano.inicio))}): cada data do intervalo do protocolo foi levada a esse dia da semana, até 3 dias antes ou depois.</div>`
+    : "";
+
   // Aviso de substituição no CORPO do documento, não só no nome do
   // arquivo: a Feegow não expõe delete de anexo, então revisões coexistem
   // no prontuário. O papel que a enfermeira leva para a bancada precisa se
@@ -405,7 +414,7 @@ ${blocos}
   <tbody>${itensRows}</tbody>
 </table>
 
-<div class="sec">Agenda — ${plano.total_sessoes} ${plural(plano.total_sessoes, "sessão", "sessões")} · ${br(plano.inicio)} a ${br(plano.ultima_data)}</div>
+<div class="sec">Agenda — ${plano.total_sessoes} ${plural(plano.total_sessoes, "sessão", "sessões")} · ${br(plano.inicio)} a ${br(plano.ultima_data)}</div>${notaAgenda}
 <table class="grid">
   <thead><tr>
     <th style="width:76px">Data</th><th style="width:48px">Dia</th><th>Aplicar</th>

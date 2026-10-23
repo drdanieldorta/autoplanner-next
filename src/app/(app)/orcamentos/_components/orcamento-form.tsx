@@ -38,6 +38,7 @@ import { formatCurrency, parseCurrency } from "@/lib/currency";
 import { formatCurrencyInput, formatCPF, formatPhoneNumber } from "@/lib/masks";
 import type { PatientSource } from "@/lib/orcamento/patient-source";
 import type { Via } from "@/lib/prescricao/enums";
+import { diaDaSemana } from "@/lib/prescricao/project";
 import type { AjusteItem, PrescricaoAjustes } from "@/lib/prescricao/types";
 import { cn } from "@/lib/utils";
 import { createOrcamentoSchema } from "@/lib/validations";
@@ -1627,8 +1628,18 @@ export function OrcamentoForm({
                 {...form.register("prescricao_inicio")}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                D0 do cronograma. As sessões seguintes usam o intervalo de
-                cada item.
+                D0 do cronograma.
+                {diaDaSemana(prescricaoInicio ?? "") ? (
+                  <>
+                    {" "}
+                    Dia de atendimento:{" "}
+                    <strong>{diaDaSemana(prescricaoInicio ?? "")}</strong>. Cada
+                    aplicação cai nesse dia da semana, na data mais próxima do
+                    intervalo do item.
+                  </>
+                ) : (
+                  " As sessões seguintes usam o intervalo de cada item."
+                )}
               </p>
             </div>
             <div className="md:col-span-2">
@@ -1676,6 +1687,9 @@ export function OrcamentoForm({
             <ClinicalGrid
               itens={linhasClinicas}
               inicio={prescricaoInicio}
+              // Orçamento novo nasce com o dia de atendimento ligado
+              // (`prescricao_alinhar_semana` default true).
+              alinharSemana
               onChange={onPatchClinico}
               onResetar={onResetarClinico}
             />

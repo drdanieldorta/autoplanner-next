@@ -77,7 +77,9 @@ export async function POST(req: Request) {
 
   const { plano, ajustes, anterior } = fonte;
   const hash = planHash(plano);
-  const avisos = avisosDoPlano(plano, ajustes);
+  const avisos = avisosDoPlano(plano, ajustes, {
+    alinharSemana: fonte.alinharSemana,
+  });
 
   // O plano carrega a revisão JÁ ANEXADA — é o número que o documento deve
   // exibir enquanto o conteúdo atual não for arquivado.

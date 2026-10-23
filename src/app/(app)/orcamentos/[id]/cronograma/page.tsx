@@ -24,7 +24,7 @@ export default async function Page({
   });
   if ("error" in fonte) notFound();
 
-  const { plano, itens, ajustes, anterior } = fonte;
+  const { plano, itens, ajustes, alinharSemana, anterior } = fonte;
 
   return (
     <div className="space-y-4 md:space-y-6 p-4 md:p-6 max-w-5xl">
@@ -56,6 +56,7 @@ export default async function Page({
           observacoes: plano.observacoes ?? "",
           alergias: plano.paciente.alergias ?? "",
           ajustes,
+          alinharSemana,
         }}
         jaEnviada={Boolean(anterior.hashEnviado)}
       />

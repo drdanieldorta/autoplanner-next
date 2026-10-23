@@ -35,6 +35,8 @@ export type PrescricaoFonte = {
   /** Itens crus normalizados — o editor reprojeta no cliente com eles. */
   itens: ItemCru[];
   ajustes: PrescricaoAjustes;
+  /** `propostas.prescricao_alinhar_semana` — datas no dia da semana do D0. */
+  alinharSemana: boolean;
   /** Já emitida antes? Governa idempotência e numeração de revisão. */
   anterior: {
     hash: string | null;
@@ -277,6 +279,10 @@ export async function loadPrescricaoFonte(args: {
       ? (ajustesRaw as PrescricaoAjustes)
       : {};
 
+  // Só `true` liga: folha gerada antes da coluna existir (ou leitura sem
+  // ela) segue a regra com que foi gerada, a das datas exatas.
+  const alinharSemana = proposta.prescricao_alinhar_semana === true;
+
   const anterior = {
     hash: (proposta.prescricao_hash as string | null) ?? null,
     hashEnviado: (proposta.prescricao_hash_enviado as string | null) ?? null,
@@ -321,6 +327,7 @@ export async function loadPrescricaoFonte(args: {
     revisao: anterior.revisao,
     gerado_em: new Date().toISOString(),
     ajustes,
+    alinharSemana,
   });
 
   return {
@@ -330,6 +337,7 @@ export async function loadPrescricaoFonte(args: {
     plano,
     itens,
     ajustes,
+    alinharSemana,
     anterior,
   };
 }
@@ -372,6 +380,7 @@ export async function salvarAjustes(args: {
   inicio: string | null;
   observacoes: string | null;
   alergias: string | null;
+  alinharSemana: boolean;
 }): Promise<void> {
   const admin = createAdminClient();
   const result = await admin
@@ -379,6 +388,7 @@ export async function salvarAjustes(args: {
     .update({
       prescricao_ajustes: args.ajustes,
       prescricao_inicio: args.inicio,
+      prescricao_alinhar_semana: args.alinharSemana,
       observacoes: args.observacoes?.trim() || null,
       paciente_alergias: args.alergias?.trim() || null,
     } as never)

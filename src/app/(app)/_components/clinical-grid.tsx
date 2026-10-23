@@ -62,6 +62,7 @@ export type ClinicalPatch = Partial<{
 export function ClinicalGrid({
   itens,
   inicio,
+  alinharSemana,
   onChange,
   onResetar,
   vazio,
@@ -70,6 +71,8 @@ export function ClinicalGrid({
   itens: ClinicalRow[];
   /** yyyy-MM-dd do D0, para resolver "começa em" numa data real. */
   inicio?: string | null;
+  /** "Começa em" resolve para o dia de atendimento, como o cronograma. */
+  alinharSemana?: boolean;
   onChange: (chave: string, patch: ClinicalPatch) => void;
   /** Quando presente, linhas ajustadas ganham "voltar ao protocolo". */
   onResetar?: (chave: string) => void;
@@ -207,6 +210,7 @@ export function ClinicalGrid({
               <DuracaoInput
                 value={item.inicio_dias}
                 inicio={inicio}
+                alinharSemana={alinharSemana}
                 onChange={(dias) => onChange(item.chave, { inicio_dias: dias })}
               />
             </div>

@@ -199,6 +199,7 @@ npm install --legacy-peer-deps
 - [x] **Fase 5.5: Modelo de contrato em Markdown + prévia** — `contracts.content` passou a ser Markdown, renderizado por `lib/contracts/custom-doc.ts` (neutro, `marked`) tanto no PDF quanto na prévia ao vivo do editor (`<iframe sandbox srcDoc>`, dados fictícios, marca da empresa). `{{procedimentos}}` sozinha numa linha vira tabela (nome e quantidade, sem valor por item — decisão 2026-10-16); `{{subtotal}}`/`{{desconto}}`/`{{total}}` passaram a refletir o desconto real do orçamento (antes desconto era fixo em R$ 0,00). Ver "Modelo do usuário é Markdown" abaixo.
 - [x] **Fase 5.6: Origem dos pacientes em Configurações** — dropdown em `/configuracao` (`api_credentials.patient_source`: `feegow` padrão, `crm`, `manual`). O padrão reproduz o comportamento anterior (Feegow → CRM → manual conforme as chaves). Só o paciente muda de origem: procedimentos e profissionais seguem da Feegow quando há chave. Sem paciente da Feegow, `POST /api/propostas` não cria proposta lá e o webhook da Authentique não anexa ao prontuário. Ver "Origem dos pacientes no orçamento" abaixo.
 - [x] **Fase 5.7: Vários protocolos por orçamento** — `/orcamentos/novo` aceita uma lista de protocolos; cada item tem quantidade editável e pode ser retirado (e restaurado), só no orçamento. O servidor monta o retrato `propostas.itens_protocolo` a partir de `protocol_items` (`montarItensProtocolo`), e contrato, cronograma e tela de detalhe leem o retrato; orçamento antigo (`itens_protocolo` null) segue lendo o protocolo ao vivo. Ver "Vários protocolos no orçamento" abaixo.
+- [x] **Fase 5.8: Dia de atendimento no cronograma** — o dia da semana do D0 é o dia em que o paciente vem à clínica; cada data padrão vai ao múltiplo de 7 mais próximo (até 3 dias). `propostas.prescricao_alinhar_semana` (orçamento novo liga; folha já gerada ficou com a regra antiga) e chave no editor. Ver "Dia de atendimento" abaixo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
 
 ## Origem dos pacientes no orçamento (Configurações)
@@ -625,6 +626,26 @@ MESMA aritmética da agenda impressa; não criar uma paralela.
 O offset padrão de uma sessão é `inicio_dias + idx * interval_days`. Ajustes por paciente
 (`prescricao_ajustes.sessoes`) guardam offsets ABSOLUTOS, então mudar `inicio_dias` num
 protocolo não move sessões já remanejadas em folhas existentes.
+
+**Dia de atendimento (2026-10-23).** O dia da semana em que o tratamento começa
+(D0) é o dia em que o paciente vem à clínica. Com `propostas.prescricao_alinhar_semana`
+ligado, `expandirSessoes` leva cada data PADRÃO ao múltiplo de 7 mais próximo do D0
+(`alinharAoDiaDeAtendimento`: resto 1–3 antecipa, 4–6 adia, nunca mais de 3 dias).
+- **Arredonda o offset ABSOLUTO, não o intervalo**: "a cada 30 dias" vira 28, 63,
+  91… O erro não se acumula, e duas sessões do mesmo item nunca caem no mesmo dia.
+- **Intervalo de 1 a 6 dias** (mais de uma ida por semana): só o começo do ciclo
+  alinha, o ritmo do protocolo segue; aviso `dia_atendimento` no editor.
+- **Remarcação manual vence** (`ajustes.sessoes` é data escolhida); fora do dia da
+  semana do D0 vira aviso. `inicio_dias` do delta é base da conta, então alinha.
+- **`PlanoSessao.alinhada` só existe quando a data mudou** (ausente, não `false`):
+  folha sem a regra, ou com todo intervalo em semanas, sai com o MESMO hash e o
+  mesmo HTML de antes (verificado contra o código anterior). A nota da agenda no
+  PDF também só aparece nesse caso.
+- **Folha já gerada ficou com `false`** (migration): o snapshot é congelado e as
+  enviadas não saem do prontuário. Ligar nelas é a chave do editor. Leitura só
+  liga com `=== true`.
+- O hint de "Começa em" (`<DuracaoInput alinharSemana>`) e o passo de "Adiar" do
+  editor usam a MESMA função; não criar conta paralela.
 
 **Feegow:** não existe escrita estruturada de prescrição. `/medical-record/*` é todo
 GET-only e `/medical-reports/create` exige `agendamento_id`. O único caminho é anexar PDF

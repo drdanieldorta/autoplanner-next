@@ -3990,6 +3990,7 @@ export type Database = {
           paciente_telefone: string | null
           payment_method: string | null
           prescricao_ajustes: Json
+          prescricao_alinhar_semana: boolean
           prescricao_envio_iniciado_em: string | null
           prescricao_erro: string | null
           prescricao_feegow_em: string | null
@@ -4048,6 +4049,7 @@ export type Database = {
           paciente_telefone?: string | null
           payment_method?: string | null
           prescricao_ajustes?: Json
+          prescricao_alinhar_semana?: boolean
           prescricao_envio_iniciado_em?: string | null
           prescricao_erro?: string | null
           prescricao_feegow_em?: string | null
@@ -4106,6 +4108,7 @@ export type Database = {
           paciente_telefone?: string | null
           payment_method?: string | null
           prescricao_ajustes?: Json
+          prescricao_alinhar_semana?: boolean
           prescricao_envio_iniciado_em?: string | null
           prescricao_erro?: string | null
           prescricao_feegow_em?: string | null
