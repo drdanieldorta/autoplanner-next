@@ -8,7 +8,7 @@ import {
   AUTENTIQUE_SIGNED_EVENT_TYPES,
   parseAutentiqueEvent,
 } from "@/lib/integrations/authentique-webhook";
-import { feegow } from "@/lib/integrations/feegow";
+import { anexarContratoAssinadoNaFeegow } from "@/lib/contracts/feegow-anexo";
 import {
   getCompanyCredentials,
   getPropostaByDocumentId,
@@ -45,9 +45,11 @@ export const dynamic = "force-dynamic";
  * dispararia um anexo irreversível no prontuário Feegow.
  *
  * **Carimbo idempotente, anexo único.** `contract_signed_at` só é gravado se
- * ainda estiver nulo, e o anexo na Feegow só roda na requisição que
- * efetivamente carimbou. `signature.accepted` e `document.finished` chegam
- * para o mesmo documento, e a Feegow não expõe delete de anexo.
+ * ainda estiver nulo. O anexo na Feegow tem estado próprio
+ * (`lib/contracts/feegow-anexo.ts`): uma trava impede anexar duas vezes
+ * quando `signature.accepted` e `document.finished` chegam juntos (a Feegow
+ * não expõe delete de anexo), e uma falha fica registrada para o evento
+ * seguinte ou o botão da tela tentarem de novo.
  *
  * O secret HMAC é por empresa (`api_credentials.webhook_secret`), o que
  * exige resolver a empresa pelo `document_id` ANTES de validar. A rota é
@@ -179,47 +181,40 @@ export async function POST(req: Request) {
   }
   const carimbouAgora = ((stamp.data ?? []) as { id: string }[]).length > 0;
 
-  // Se a empresa tem feegow_token, baixa o PDF assinado e anexa ao prontuário.
-  // Só quando o paciente é da Feegow: orçamento com paciente digitado ou do
-  // CRM grava `paciente_id: "manual"` e não tem prontuário — o que acontece
-  // em empresa COM Feegow quando, em Configurações, a origem dos pacientes é
-  // CRM ou manual.
+  // Anexo no prontuário da Feegow, com estado próprio
+  // (`lib/contracts/feegow-anexo.ts`). Não depende de ESTA requisição ter
+  // carimbado: se o anexo falhou no `signature.accepted`, o
+  // `document.finished` que vem depois tenta de novo. A trava lá dentro
+  // impede anexo duplo quando os dois eventos chegam juntos. Paciente
+  // digitado ou do CRM (`paciente_id: "manual"`) e empresa sem Feegow
+  // voltam `nao_aplicavel`.
   //
-  // Só na requisição que carimbou agora: a Feegow não expõe delete nem
-  // replace de anexo, e o segundo evento do mesmo documento anexaria o PDF
-  // de novo.
-  const temProntuario =
-    !!proposta.paciente_id && proposta.paciente_id !== "manual";
-  if (
-    carimbouAgora &&
-    creds.feegow_token &&
-    creds.authentique_token &&
-    temProntuario
-  ) {
-    try {
-      const signedUrl = await authentique(
-        creds.authentique_token,
-      ).getSignedFileUrl(documentId);
-      if (signedUrl) {
-        const pdfRes = await fetch(signedUrl);
-        if (pdfRes.ok) {
-          const buf = Buffer.from(await pdfRes.arrayBuffer());
-          const base64 = buf.toString("base64");
-          await feegow(creds.feegow_token).uploadBase64ToPatient({
-            paciente_id: proposta.paciente_id,
-            base64: `data:application/pdf;base64,${base64}`,
-            arquivo_descricao: `Contrato assinado - ${proposta.paciente_nome}`,
-          });
-        }
-      }
-    } catch (err) {
-      // Loga mas não falha — a assinatura já foi registrada.
-      console.error(
-        "[/webhooks/authentique] Falha ao anexar PDF Feegow:",
-        err,
-      );
-    }
+  // `documentoConfirmado`: o anexo só sai para o documento que ESTA rota
+  // acabou de confirmar como assinado — se o contrato foi reenviado no meio
+  // do caminho, o documento novo (ainda não assinado) não sobe.
+  //
+  // 200 para falha do anexo: ela fica registrada no orçamento (a tela mostra
+  // e oferece "Tentar de novo"). 5xx faria a Autentique reenviar, mas uma
+  // falha permanente (paciente inexistente na Feegow) viraria uma fila de
+  // reenvios e poderia levar a Autentique a desativar o webhook da clínica.
+  // A exceção é `em_andamento` (o outro evento do mesmo documento está
+  // enviando agora): 503, para este voltar e tentar de novo caso aquele
+  // falhe. A trava impede o anexo duplo na volta.
+  const anexo = await anexarContratoAssinadoNaFeegow({
+    propostaId: proposta.id,
+    companyId: proposta.company_id,
+    documentoConfirmado: documentId,
+  });
+  if (anexo.status === "em_andamento") {
+    return NextResponse.json(
+      { ok: false, stamped: carimbouAgora, feegow: anexo.status },
+      { status: 503 },
+    );
   }
 
-  return NextResponse.json({ ok: true, stamped: carimbouAgora });
+  return NextResponse.json({
+    ok: true,
+    stamped: carimbouAgora,
+    feegow: anexo.status,
+  });
 }

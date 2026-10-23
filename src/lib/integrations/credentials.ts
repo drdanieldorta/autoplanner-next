@@ -38,6 +38,7 @@ export async function getCompanyCredentials(
  * id_proposta_api a partir do evento de assinatura.
  */
 export async function getPropostaByDocumentId(documentId: string): Promise<{
+  id: string;
   company_id: string;
   id_proposta_api: number | null;
   user_id: string;
@@ -47,7 +48,7 @@ export async function getPropostaByDocumentId(documentId: string): Promise<{
   const admin = createAdminClient();
   const result = await admin
     .from("propostas")
-    .select("company_id, id_proposta_api, user_id, paciente_nome, paciente_id")
+    .select("id, company_id, id_proposta_api, user_id, paciente_nome, paciente_id")
     .eq("document_id", documentId)
     .maybeSingle();
   if (result.error && result.error.code !== "PGRST116") {
@@ -55,6 +56,7 @@ export async function getPropostaByDocumentId(documentId: string): Promise<{
   }
   return (
     result.data as {
+      id: string;
       company_id: string;
       id_proposta_api: number | null;
       user_id: string;

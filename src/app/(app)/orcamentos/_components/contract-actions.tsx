@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
+  Upload,
   XCircle,
 } from "lucide-react";
 
@@ -54,6 +55,18 @@ type ContractStatus = {
   rejectedReason: string | null;
   signingLink: string | null;
   hasArchive: boolean;
+  /** Anexo do contrato assinado no prontuário da Feegow. */
+  feegow?: {
+    empresaTemFeegow: boolean;
+    pacienteComProntuario: boolean;
+    aplicavel: boolean;
+    anexadoEm: string | null;
+    erro: string | null;
+    emAndamento: boolean;
+    emDuvida: boolean;
+    /** Nada gravado: assinado antes deste controle (o n8n pode ter anexado). */
+    semRegistro: boolean;
+  };
 };
 
 function formatDateTime(iso: string): string {
@@ -136,6 +149,11 @@ export function ContractActions({ propostaId, documentId }: Props) {
   const [loadingStatus, setLoadingStatus] = useState(!!documentId);
   const [copied, setCopied] = useState(false);
 
+  // Incrementar recarrega o status (depois de enviar ao prontuário).
+  const [statusVersion, setStatusVersion] = useState(0);
+  const [sendingFeegow, setSendingFeegow] = useState(false);
+  const [confirmingDuplicate, setConfirmingDuplicate] = useState(false);
+
   useEffect(() => {
     if (!documentId) return;
     let cancelled = false;
@@ -154,7 +172,33 @@ export function ContractActions({ propostaId, documentId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [propostaId, documentId]);
+  }, [propostaId, documentId, statusVersion]);
+
+  /** Anexa o contrato assinado ao prontuário da Feegow (ato explícito). */
+  const sendToFeegow = async (confirmarDuplicata = false) => {
+    setSendingFeegow(true);
+    try {
+      const res = await fetch(`/api/contratos/${propostaId}/feegow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmar_duplicata: confirmarDuplicata }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        status?: string;
+      };
+      if (!res.ok) {
+        toast.error(data.error ?? "Falha ao enviar ao prontuário");
+      } else {
+        toast.success("Contrato assinado anexado ao prontuário da Feegow");
+      }
+    } catch {
+      toast.error("Erro de rede ao enviar ao prontuário");
+    } finally {
+      setSendingFeegow(false);
+      setStatusVersion((v) => v + 1);
+    }
+  };
 
   const pdfUrl = `/api/contratos/${propostaId}/pdf`;
 
@@ -278,11 +322,50 @@ export function ContractActions({ propostaId, documentId }: Props) {
           </div>
         )}
 
+        {status?.feegow?.empresaTemFeegow && (
+          <FeegowRow
+            feegow={status.feegow}
+            assinado={status.status === "signed"}
+            sending={sendingFeegow || isPending}
+            onSend={() => sendToFeegow(false)}
+            onConfirmDuplicate={() => setConfirmingDuplicate(true)}
+          />
+        )}
+
         <div className="flex items-center justify-between gap-3 pt-1 border-t">
           <span className="text-muted-foreground">Documento</span>
           <span className="font-mono text-xs break-all">{documentId}</span>
         </div>
       </div>
+
+      <AlertDialog
+        open={confirmingDuplicate}
+        onOpenChange={setConfirmingDuplicate}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Enviar ao prontuário?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Não há confirmação de que este contrato está no prontuário: ele
+              pode já ter sido anexado pelo sistema antigo (n8n) ou por um
+              envio que não confirmou. A Feegow não permite apagar anexo.
+              Confira o prontuário do paciente antes de enviar.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                setConfirmingDuplicate(false);
+                void sendToFeegow(true);
+              }}
+            >
+              Conferi, enviar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmingResend} onOpenChange={setConfirmingResend}>
         <AlertDialogTrigger asChild>
@@ -313,6 +396,104 @@ export function ContractActions({ propostaId, documentId }: Props) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+/**
+ * Linha "Prontuário Feegow" do card. O anexo é automático quando o paciente
+ * assina (webhook da Autentique); o botão só aparece quando é preciso:
+ * falhou, nunca rodou (assinado antes de o webhook existir) ou ficou em
+ * dúvida.
+ */
+function FeegowRow({
+  feegow,
+  assinado,
+  sending,
+  onSend,
+  onConfirmDuplicate,
+}: {
+  feegow: NonNullable<ContractStatus["feegow"]>;
+  assinado: boolean;
+  sending: boolean;
+  onSend: () => void;
+  onConfirmDuplicate: () => void;
+}) {
+  const botao = (label: string, onClick: () => void) => (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="h-7"
+      onClick={onClick}
+      disabled={sending}
+    >
+      <Upload className="h-3.5 w-3.5 mr-1.5" />
+      {sending ? "Enviando..." : label}
+    </Button>
+  );
+
+  let conteudo: ReactNode;
+  if (!feegow.pacienteComProntuario) {
+    conteudo = (
+      <span className="text-muted-foreground text-right">
+        Paciente sem prontuário na Feegow
+      </span>
+    );
+  } else if (!feegow.aplicavel) {
+    conteudo = (
+      <span className="text-muted-foreground text-right">
+        Autentique não configurada
+      </span>
+    );
+  } else if (feegow.anexadoEm) {
+    conteudo = (
+      <span className="inline-flex items-center gap-1.5 text-success">
+        <Check className="h-4 w-4" />
+        Anexado em {formatDateTime(feegow.anexadoEm)}
+      </span>
+    );
+  } else if (feegow.emAndamento) {
+    conteudo = <span className="text-muted-foreground">Enviando...</span>;
+  } else if (feegow.emDuvida) {
+    conteudo = (
+      <div className="flex flex-col items-end gap-1 text-right min-w-0">
+        <span className="text-warning break-words" title={feegow.erro ?? undefined}>
+          Envio não confirmado
+        </span>
+        {botao("Reenviar", onConfirmDuplicate)}
+      </div>
+    );
+  } else if (feegow.erro) {
+    conteudo = (
+      <div className="flex flex-col items-end gap-1 text-right min-w-0">
+        <span className="text-destructive break-words" title={feegow.erro}>
+          Falhou: {feegow.erro}
+        </span>
+        {botao("Tentar de novo", onSend)}
+      </div>
+    );
+  } else if (assinado) {
+    // Assinado sem nenhum registro de envio: pode ter sido anexado pelo
+    // sistema antigo (n8n). Enviar pede confirmação, como o "em dúvida".
+    conteudo = (
+      <div className="flex flex-col items-end gap-1 text-right">
+        <span className="text-muted-foreground">Sem registro de envio</span>
+        {botao("Enviar ao prontuário", onConfirmDuplicate)}
+      </div>
+    );
+  } else {
+    conteudo = (
+      <span className="text-muted-foreground text-right">
+        Anexado automaticamente quando o paciente assinar
+      </span>
+    );
+  }
+
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-muted-foreground shrink-0">Prontuário Feegow</span>
+      {conteudo}
     </div>
   );
 }

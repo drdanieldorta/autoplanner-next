@@ -80,6 +80,44 @@ export function addDiasISO(inicio: string, dias: number): string {
   return formatDia(addDias(parseDiaLocal(inicio), dias));
 }
 
+const SEMANA = 7;
+
+/**
+ * Dia de atendimento (decisão 2026-10-23): o dia da semana em que o
+ * tratamento começa é o dia em que o paciente vem à clínica. Uma data do
+ * protocolo vai ao múltiplo de 7 mais próximo do D0: resto de 1 a 3 dias
+ * antecipa, de 4 a 6 adia. Nunca mais de 3 dias, e sem empate (dia é
+ * inteiro).
+ *
+ * Exportado para o hint de "Começa em" usar ESTA conta, não uma paralela.
+ */
+export function alinharAoDiaDeAtendimento(offset: number): number {
+  return Math.round(offset / SEMANA) * SEMANA;
+}
+
+const DIAS_DA_SEMANA = [
+  "domingo",
+  "segunda-feira",
+  "terça-feira",
+  "quarta-feira",
+  "quinta-feira",
+  "sexta-feira",
+  "sábado",
+] as const;
+
+/** "2026-11-02" → "segunda-feira". */
+export function diaDaSemana(yyyyMmDd: string): string {
+  if (!isDataValida(yyyyMmDd)) return "";
+  return DIAS_DA_SEMANA[parseDiaLocal(yyyyMmDd).getDay()];
+}
+
+/** "na segunda-feira", "no sábado". */
+export function noDiaDaSemana(yyyyMmDd: string): string {
+  const dia = diaDaSemana(yyyyMmDd);
+  if (!dia) return "";
+  return `${dia === "sábado" || dia === "domingo" ? "no" : "na"} ${dia}`;
+}
+
 /** Normaliza um item cru, resolvendo a via (banco → heurístico → null). */
 export function normalizarItem(raw: ItemCru): PlanoItemFonte {
   const viaBanco = raw.via as Via | null | undefined;
@@ -115,50 +153,73 @@ export function normalizarItem(raw: ItemCru): PlanoItemFonte {
 function expandirSessoes(
   item: PlanoItemFonte,
   inicio: Date,
-  ajusteSessoes?: Record<string, number>,
+  ajusteSessoes: Record<string, number> | undefined,
+  alinharSemana: boolean,
 ): PlanoSessao[] {
-  const offsetDe = (n: number, padrao: number): { offset: number; ajustada: boolean } => {
-    const bruto = ajusteSessoes?.[String(n)];
-    if (bruto === undefined || bruto === null) return { offset: padrao, ajustada: false };
-    const v = Math.max(0, Math.trunc(Number(bruto)));
-    if (!Number.isFinite(v)) return { offset: padrao, ajustada: false };
-    return { offset: v, ajustada: v !== padrao };
+  // Data padrão da sessão `idx` (0-based): a do protocolo, ou a do dia de
+  // atendimento mais próximo dela.
+  const padraoDe = (idx: number): { bruto: number; padrao: number } => {
+    const bruto = item.inicio_dias + idx * item.interval_days;
+    if (!alinharSemana) return { bruto, padrao: bruto };
+    // Intervalo de uma semana ou mais: arredonda o offset ABSOLUTO, não o
+    // intervalo. "A cada 30 dias" vira 28, 63, 91…: cada data fica a até 3
+    // dias da do protocolo e o erro não se acumula ao longo do tratamento.
+    // Duas sessões do item nunca caem no mesmo dia (offsets a 7+ dias de
+    // distância arredondam para semanas distintas).
+    if (item.interval_days === 0 || item.interval_days >= SEMANA) {
+      return { bruto, padrao: alinharAoDiaDeAtendimento(bruto) };
+    }
+    // Menos de uma semana: o paciente vem mais de uma vez por semana, e
+    // alinhar cada sessão empilharia duas do mesmo item na mesma visita. Só
+    // o começo do ciclo vai ao dia de atendimento; o ritmo do protocolo segue.
+    return {
+      bruto,
+      padrao:
+        alinharAoDiaDeAtendimento(item.inicio_dias) + idx * item.interval_days,
+    };
   };
+
+  const offsetDe = (
+    n: number,
+    { bruto, padrao }: { bruto: number; padrao: number },
+  ): { offset: number; ajustada: boolean; alinhada: boolean } => {
+    const manual = ajusteSessoes?.[String(n)];
+    const semAjuste = { offset: padrao, ajustada: false, alinhada: padrao !== bruto };
+    if (manual === undefined || manual === null) return semAjuste;
+    const v = Math.max(0, Math.trunc(Number(manual)));
+    if (!Number.isFinite(v)) return semAjuste;
+    // Data escolhida à mão não é mexida pelo dia de atendimento. Igual à data
+    // padrão não é ajuste, e segue marcada como alinhada se a padrão for.
+    return v !== padrao
+      ? { offset: v, ajustada: true, alinhada: false }
+      : semAjuste;
+  };
+
+  const sessao = (
+    n: number,
+    total: number,
+    repeticoes: number,
+    { offset, ajustada, alinhada }: ReturnType<typeof offsetDe>,
+  ): PlanoSessao => ({
+    n,
+    ordem: n,
+    total,
+    ajustada,
+    // Só presente quando a data mudou. Sem a regra (ou com toda data já no
+    // dia de atendimento) o plano sai idêntico, e o hash também.
+    ...(alinhada ? { alinhada: true as const } : {}),
+    offset_dias: offset,
+    data: formatDia(addDias(inicio, offset)),
+    rotulo: rotuloDia(offset),
+    repeticoes,
+  });
 
   const brutas: PlanoSessao[] =
     item.interval_days === 0
-      ? (() => {
-          const { offset, ajustada } = offsetDe(1, item.inicio_dias);
-          return [
-            {
-              n: 1,
-              ordem: 1,
-              total: 1,
-              ajustada,
-              offset_dias: offset,
-              data: formatDia(addDias(inicio, offset)),
-              rotulo: rotuloDia(offset),
-              repeticoes: item.quantity,
-            },
-          ];
-        })()
-      : Array.from({ length: item.quantity }, (_, idx) => {
-          const n = idx + 1;
-          const { offset, ajustada } = offsetDe(
-            n,
-            item.inicio_dias + idx * item.interval_days,
-          );
-          return {
-            n,
-            ordem: n,
-            total: item.quantity,
-            ajustada,
-            offset_dias: offset,
-            data: formatDia(addDias(inicio, offset)),
-            rotulo: rotuloDia(offset),
-            repeticoes: 1,
-          };
-        });
+      ? [sessao(1, 1, item.quantity, offsetDe(1, padraoDe(0)))]
+      : Array.from({ length: item.quantity }, (_, idx) =>
+          sessao(idx + 1, item.quantity, 1, offsetDe(idx + 1, padraoDe(idx))),
+        );
 
   // Reordena por data e RENUMERA para exibição. A enfermeira lê a folha
   // cronologicamente, então "2/6" tem que significar "a segunda a acontecer".
@@ -185,6 +246,12 @@ export type ProjetarInput = {
   gerado_em: string;
   /** Delta esparso desta folha. Vazio ⇒ projeção pura do protocolo. */
   ajustes?: PrescricaoAjustes;
+  /**
+   * Leva as datas padrão ao dia da semana do D0
+   * (`propostas.prescricao_alinhar_semana`). Ausente ⇒ datas exatas do
+   * protocolo, como toda folha gerada antes de 2026-10-23.
+   */
+  alinharSemana?: boolean;
 };
 
 export function projetarPlano(input: ProjetarInput): PlanoExecucao {
@@ -228,7 +295,12 @@ export function projetarPlano(input: ProjetarInput): PlanoExecucao {
       inicio_dias: inicioAjustado ?? fonte.inicio_dias,
     };
 
-    const sessoes = expandirSessoes(comAjuste, inicioDate, aj?.sessoes);
+    const sessoes = expandirSessoes(
+      comAjuste,
+      inicioDate,
+      aj?.sessoes,
+      input.alinharSemana === true,
+    );
 
     return {
       ...comAjuste,
@@ -309,8 +381,10 @@ export function projetarPlano(input: ProjetarInput): PlanoExecucao {
 export function avisosDoPlano(
   plano: PlanoExecucao,
   ajustes?: PrescricaoAjustes,
+  opcoes?: { alinharSemana?: boolean },
 ): PlanoAviso[] {
   const avisos: PlanoAviso[] = [];
+  const diaDeAtendimento = opcoes?.alinharSemana ? diaDaSemana(plano.inicio) : "";
 
   // Ajuste órfão: a chave é o id do item do protocolo, e `updateProtocol`
   // recria esses ids no delete-then-insert. Se o protocolo mudou depois do
@@ -370,6 +444,29 @@ export function avisosDoPlano(
           campo: "sessoes_no_mesmo_dia",
           mensagem: `"${item.procedure_name}": ${n} sessões caem em ${d}/${m}/${y}. Confirme se é intencional.`,
         });
+      }
+    }
+
+    // Dia de atendimento: o normal (data levada ao dia) não vira aviso, é a
+    // regra funcionando. Aviso só onde ela não vale.
+    if (diaDeAtendimento) {
+      if (item.interval_days > 0 && item.interval_days < SEMANA && item.quantity > 1) {
+        avisos.push({
+          ref: item.ref,
+          campo: "dia_atendimento",
+          mensagem: `"${item.procedure_name}" (a cada ${item.interval_days} ${item.interval_days === 1 ? "dia" : "dias"}): mais de uma ida por semana, só a 1ª sessão segue o dia de atendimento (${diaDeAtendimento}).`,
+        });
+      }
+      for (const s of item.sessoes) {
+        const dia = diaDaSemana(s.data);
+        if (s.ajustada && dia !== diaDeAtendimento) {
+          const [y, m, d] = s.data.split("-");
+          avisos.push({
+            ref: item.ref,
+            campo: "dia_atendimento",
+            mensagem: `"${item.procedure_name}": sessão remarcada para ${dia}, ${d}/${m}/${y}, fora do dia de atendimento (${diaDeAtendimento}).`,
+          });
+        }
       }
     }
 

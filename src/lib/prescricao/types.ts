@@ -70,6 +70,12 @@ export type PlanoSessao = {
   total: number;
   /** True quando esta sessão teve a data alterada nesta folha. */
   ajustada: boolean;
+  /**
+   * Presente (true) quando a data padrão foi levada ao dia de atendimento e
+   * por isso difere da do protocolo. Ausente em vez de false de propósito: o
+   * snapshot e o hash de toda folha sem a regra seguem idênticos.
+   */
+  alinhada?: true;
   offset_dias: number;
   /** yyyy-MM-dd */
   data: string;

@@ -199,6 +199,7 @@ npm install --legacy-peer-deps
 - [x] **Fase 5.5: Modelo de contrato em Markdown + prévia** — `contracts.content` passou a ser Markdown, renderizado por `lib/contracts/custom-doc.ts` (neutro, `marked`) tanto no PDF quanto na prévia ao vivo do editor (`<iframe sandbox srcDoc>`, dados fictícios, marca da empresa). `{{procedimentos}}` sozinha numa linha vira tabela (nome e quantidade, sem valor por item — decisão 2026-10-16); `{{subtotal}}`/`{{desconto}}`/`{{total}}` passaram a refletir o desconto real do orçamento (antes desconto era fixo em R$ 0,00). Ver "Modelo do usuário é Markdown" abaixo.
 - [x] **Fase 5.6: Origem dos pacientes em Configurações** — dropdown em `/configuracao` (`api_credentials.patient_source`: `feegow` padrão, `crm`, `manual`). O padrão reproduz o comportamento anterior (Feegow → CRM → manual conforme as chaves). Só o paciente muda de origem: procedimentos e profissionais seguem da Feegow quando há chave. Sem paciente da Feegow, `POST /api/propostas` não cria proposta lá e o webhook da Authentique não anexa ao prontuário. Ver "Origem dos pacientes no orçamento" abaixo.
 - [x] **Fase 5.7: Vários protocolos por orçamento** — `/orcamentos/novo` aceita uma lista de protocolos; cada item tem quantidade editável e pode ser retirado (e restaurado), só no orçamento. O servidor monta o retrato `propostas.itens_protocolo` a partir de `protocol_items` (`montarItensProtocolo`), e contrato, cronograma e tela de detalhe leem o retrato; orçamento antigo (`itens_protocolo` null) segue lendo o protocolo ao vivo. Ver "Vários protocolos no orçamento" abaixo.
+- [x] **Fase 5.8: Dia de atendimento no cronograma** — o dia da semana do D0 é o dia em que o paciente vem à clínica; cada data padrão vai ao múltiplo de 7 mais próximo (até 3 dias). `propostas.prescricao_alinhar_semana` (orçamento novo liga; folha já gerada ficou com a regra antiga) e chave no editor. Ver "Dia de atendimento" abaixo.
 - [ ] **Fase 6: Cutover** — rotacionar todos os secrets, apontar `infiniteplan.mdia.cloud` para Vercel, decommissionar n8n.
 
 ## Origem dos pacientes no orçamento (Configurações)
@@ -253,6 +254,13 @@ data cache da Vercel, porque a lista de clínica grande passa do limite de item 
 não queremos dado de paciente persistido lá. Busca que não acha nada com a lista
 com mais de 1 minuto recarrega uma vez (paciente recém-cadastrado). Casa
 todas as palavras no nome (sem acento/caixa), e-mail, ou telefone (4+ dígitos).
+
+⚠️ O cache mora em **`globalThis`**, não num `Map` do módulo: a página (bundle SSR) e
+as rotas `/api` (outro bundle) recebem CÓPIAS separadas do módulo no Next, e um `Map`
+de módulo fazia o pré-carregamento da página encher um cache que a busca nunca lia.
+A idade da lista conta de quando ela CHEGA, e a recarga após busca sem resultado
+**não apaga a lista boa**: buscas simultâneas seguem usando a atual, e se a recarga
+falhar (Feegow instável) a lista em cache continua valendo.
 
 O formulário abre esperando a lista no máximo 3s; clínica grande na primeira vez
 abre com o dropdown vazio ("Digite para buscar") e `after()` mantém o
@@ -423,17 +431,48 @@ assinaram. Sem isso, quem soubesse um id de documento marcaria o contrato como a
 e dispararia um anexo irreversível na Feegow. Empresa sem `authentique_token` → 200
 `ignored`; consulta falhou (`status: null`) → 503.
 
-**Carimbo idempotente, anexo único.** O `update` só grava se `contract_signed_at` for
-nulo (com o `signedAt` da Autentique) e usa `.select("id")` para saber se foi ESTA
-requisição que carimbou. O anexo na Feegow só roda nela: `signature.accepted` e
-`document.finished` chegam para o mesmo documento, e a Feegow não expõe delete de anexo.
+**Carimbo idempotente.** O `update` só grava se `contract_signed_at` for nulo (com o
+`signedAt` da Autentique). **Reenviar o contrato zera** `contract_signed_at` e o estado do
+anexo (`envio-manual`): assinatura e anexo são do DOCUMENTO, não do orçamento — sem zerar,
+o documento novo nunca carimbava nem anexava, e o card mostrava "Assinado" para um
+contrato recém-reenviado.
+
+**Anexo no prontuário com estado próprio (2026-10-22)** —
+[feegow-anexo.ts](src/lib/contracts/feegow-anexo.ts), usado pelo webhook (automático,
+assim que o paciente assina) e pelo botão "Enviar ao prontuário" do card do contrato:
+`contract_feegow_em` (anexado), `contract_feegow_iniciado_em` (envio em curso) e
+`contract_feegow_erro` (última falha). Antes o anexo era amarrado ao carimbo — só a
+requisição que carimbava anexava —, então uma Feegow fora do ar naquele instante perdia o
+anexo para sempre, sem registro. Agora:
+- **tudo preso ao DOCUMENTO**: leitura, trava e gravações filtram por `document_id`, e o
+  webhook passa o documento que ELE confirmou como assinado (`documentoConfirmado`). Sem
+  isso, um reenvio no meio do caminho fazia subir o contrato novo (não assinado) como
+  "Contrato assinado", ou marcava o novo como já anexado e o assinado nunca chegava;
+- **trava otimista** em `contract_feegow_iniciado_em` (só quem troca o valor que leu envia);
+- o evento seguinte (`document.finished` depois de `signature.accepted`) tenta de novo
+  depois de uma falha CERTA; o evento que chega enquanto o outro envia recebe **503**
+  (`em_andamento`) para a Autentique reenviá-lo — a trava impede o duplo na volta;
+- **"em dúvida"** quando não dá para saber se o arquivo chegou: trava antiga (>10 min) sem
+  conclusão, ou o POST à Feegow falhou de um jeito que não exclui que ela tenha gravado
+  (rede, 5xx — só `success: false` e 4xx são recusa certa). O automático não reenvia; o
+  botão só com confirmação ("confira o prontuário"), porque a Feegow não tem delete;
+- **sem registro nenhum** (assinado antes deste controle, quando o n8n pode ter anexado):
+  o automático envia (é quem acabou de assinar), mas o botão pede a mesma confirmação
+  (`sem_registro`, 409 sem `confirmar_duplicata`);
+- fora o `em_andamento`, o webhook responde **200 mesmo quando o anexo falha** (a falha
+  fica no orçamento e na tela). 5xx para falha permanente viraria fila de reenvios e
+  poderia desativar o webhook da clínica;
+- o botão manual confirma a assinatura na Autentique antes de enviar e, se o contrato foi
+  assinado antes de o webhook existir, registra `contract_signed_at` de passagem.
+Paciente digitado ou do CRM não tem prontuário: `nao_aplicavel`, e o card diz isso.
 
 **A URL fica em `/configuracao`** (card "Webhook da Autentique", com passo a passo e a
 data da última assinatura recebida, que serve de sinal de vida). Domínio:
 `VERCEL_PROJECT_PRODUCTION_URL` ou, fora da Vercel, os headers da requisição
 ([app-url.ts](src/lib/app-url.ts)). **Cada clínica precisa cadastrar a URL na própria
 conta da Autentique** (formato JSON, os dois eventos) e remover ou trocar o webhook antigo
-do n8n. Enquanto ele existir, as assinaturas continuam indo para lá.
+do n8n. Com os dois ativos, o n8n também anexa o PDF e o prontuário fica com o contrato
+duplicado.
 
 ## Vários protocolos no orçamento (retrato dos itens)
 
@@ -472,6 +511,11 @@ de `protocols` como sempre. A quantidade do orçamento é o número de sessões.
 
 **Documentos:** adicionar um protocolo SOMA os documentos dele à seleção (e marca o
 TCLE se ele propõe); remover tira só os que nenhum protocolo restante propõe.
+
+**Quantidade e itens retirados.** Quantidade sem teto (o protocolo também não tem);
+o campo guarda o texto enquanto a pessoa digita e só repassa inteiro ≥ 1. Retirar um
+item NÃO apaga o ajuste clínico dele — restaurar traz de volta; só os itens incluídos
+vão no payload, e o servidor filtra de novo.
 
 ⚠️ O select de `protocol_items` em `montarItensProtocolo` é explícito: é o **sexto
 lugar** da lista abaixo. Coluna nova que precise chegar ao contrato ou ao
@@ -583,6 +627,26 @@ O offset padrão de uma sessão é `inicio_dias + idx * interval_days`. Ajustes 
 (`prescricao_ajustes.sessoes`) guardam offsets ABSOLUTOS, então mudar `inicio_dias` num
 protocolo não move sessões já remanejadas em folhas existentes.
 
+**Dia de atendimento (2026-10-23).** O dia da semana em que o tratamento começa
+(D0) é o dia em que o paciente vem à clínica. Com `propostas.prescricao_alinhar_semana`
+ligado, `expandirSessoes` leva cada data PADRÃO ao múltiplo de 7 mais próximo do D0
+(`alinharAoDiaDeAtendimento`: resto 1–3 antecipa, 4–6 adia, nunca mais de 3 dias).
+- **Arredonda o offset ABSOLUTO, não o intervalo**: "a cada 30 dias" vira 28, 63,
+  91… O erro não se acumula, e duas sessões do mesmo item nunca caem no mesmo dia.
+- **Intervalo de 1 a 6 dias** (mais de uma ida por semana): só o começo do ciclo
+  alinha, o ritmo do protocolo segue; aviso `dia_atendimento` no editor.
+- **Remarcação manual vence** (`ajustes.sessoes` é data escolhida); fora do dia da
+  semana do D0 vira aviso. `inicio_dias` do delta é base da conta, então alinha.
+- **`PlanoSessao.alinhada` só existe quando a data mudou** (ausente, não `false`):
+  folha sem a regra, ou com todo intervalo em semanas, sai com o MESMO hash e o
+  mesmo HTML de antes (verificado contra o código anterior). A nota da agenda no
+  PDF também só aparece nesse caso.
+- **Folha já gerada ficou com `false`** (migration): o snapshot é congelado e as
+  enviadas não saem do prontuário. Ligar nelas é a chave do editor. Leitura só
+  liga com `=== true`.
+- O hint de "Começa em" (`<DuracaoInput alinharSemana>`) e o passo de "Adiar" do
+  editor usam a MESMA função; não criar conta paralela.
+
 **Feegow:** não existe escrita estruturada de prescrição. `/medical-record/*` é todo
 GET-only e `/medical-reports/create` exige `agendamento_id`. O único caminho é anexar PDF
 via `POST /patient/upload-base64`. Idempotência por `sha256(canonicalJson(plano))`, que
@@ -605,6 +669,7 @@ como HTTP 200 com `{"success": false}`. O `fetcher` genérico só lança em `!re
 - **Mutations Supabase quebram com type "never"** no SDK atual + types gerados PostgrestVersion 13.0.5. Padrão: `.insert(payload as never)`, `.update(payload as never)`, `.upsert(payload as never)`. Quando regerarmos os types via `npm run types:supabase`, isso pode parar.
 - **Turbopack panic com CSS** em paths com espaços no Windows pode acontecer (ex: `Projetos Claude\`). Solução: `rm -rf .next` e relaunch, ou rodar com webpack via env. Build de produção não é afetado.
 - **RHF `form.watch()` viola `react-hooks/incompatible-library`.** Usar `// eslint-disable-next-line react-hooks/incompatible-library` na linha. É padrão idiomático do RHF.
+- **Radix Select com `value=""` fixo (seletor de "adicionar"):** com o seletor FECHADO, letra digitada vira busca e chama `onValueChange` com o primeiro item que casa — cada letra adicionaria um item. Barrar teclas imprimíveis no `onKeyDown` do `SelectTrigger` (ver "Adicionar protocolo" em `orcamento-form.tsx`).
 - **Toda cor de `globals.css` usada como classe precisa estar em `tailwind.config.ts`.** `--popover` existia no CSS mas não no config: `bg-popover` não gerava nada e todo Popover/Command/DropdownMenu/Tooltip ficava transparente, com o texto da página aparecendo por trás (corrigido 2026-10-22).
 - **Client Components não podem importar de arquivos com `import "server-only"`.** Quando precisar compartilhar uma constante (ex: `CONTRACT_VARIABLES`), extrair para arquivo neutro em `lib/<dominio>/variables.ts`.
 

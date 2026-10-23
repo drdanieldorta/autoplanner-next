@@ -62,6 +62,7 @@ export type ClinicalPatch = Partial<{
 export function ClinicalGrid({
   itens,
   inicio,
+  alinharSemana,
   onChange,
   onResetar,
   vazio,
@@ -70,6 +71,8 @@ export function ClinicalGrid({
   itens: ClinicalRow[];
   /** yyyy-MM-dd do D0, para resolver "começa em" numa data real. */
   inicio?: string | null;
+  /** "Começa em" resolve para o dia de atendimento, como o cronograma. */
+  alinharSemana?: boolean;
   onChange: (chave: string, patch: ClinicalPatch) => void;
   /** Quando presente, linhas ajustadas ganham "voltar ao protocolo". */
   onResetar?: (chave: string) => void;
@@ -127,16 +130,20 @@ export function ClinicalGrid({
                     </span>
                   )}
                 </p>
+              </div>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                {/* Etiqueta na linha de baixo, não ao lado do nome: com
+                    vários protocolos ela é o NOME do protocolo, e ao lado
+                    do nome (shrink-0) tomava a célula inteira. */}
                 {item.etiqueta && (
                   <Badge
                     variant="secondary"
-                    className="text-[10px] font-normal shrink-0"
+                    className="text-[10px] font-normal max-w-full min-w-0"
+                    title={item.etiqueta}
                   >
-                    {item.etiqueta}
+                    <span className="truncate">{item.etiqueta}</span>
                   </Badge>
                 )}
-              </div>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
                 {!item.via && (
                   <Badge variant="outline" className="text-[10px] font-normal">
                     sem via
@@ -203,6 +210,7 @@ export function ClinicalGrid({
               <DuracaoInput
                 value={item.inicio_dias}
                 inicio={inicio}
+                alinharSemana={alinharSemana}
                 onChange={(dias) => onChange(item.chave, { inicio_dias: dias })}
               />
             </div>

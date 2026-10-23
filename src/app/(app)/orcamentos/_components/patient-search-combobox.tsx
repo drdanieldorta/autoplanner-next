@@ -66,6 +66,11 @@ export function PatientSearchCombobox({
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Item destacado pelo teclado, controlado aqui: a cada resposta do
+  // servidor ele volta para o primeiro resultado. Sem isso, uma tecla
+  // digitada durante a busca deixava o destaque em "Preencher manualmente"
+  // (o único item na tela naquele instante) e o Enter limpava o paciente.
+  const [active, setActive] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abort = useRef<AbortController | null>(null);
 
@@ -102,6 +107,7 @@ export function PatientSearchCombobox({
           hasMore: boolean;
         };
         setResults(data.items);
+        setActive(data.items[0]?.id ?? "");
         setHasMore(data.hasMore);
       } catch (err) {
         if (ctrl.signal.aborted) return;
@@ -149,7 +155,7 @@ export function PatientSearchCombobox({
       >
         {/* O filtro é do servidor. Se o cmdk filtrasse de novo, esconderia
             resultados que casaram por e-mail/telefone e o item manual. */}
-        <Command shouldFilter={false}>
+        <Command shouldFilter={false} value={active} onValueChange={setActive}>
           <CommandInput
             placeholder={searchPlaceholder}
             value={query}

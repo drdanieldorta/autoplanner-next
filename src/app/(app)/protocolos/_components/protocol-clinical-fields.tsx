@@ -37,6 +37,9 @@ export function ProtocolClinicalGrid({
         inicio_dias: item.inicio_dias ?? 0,
         cuidados: item.cuidados ?? null,
       }))}
+      // Orçamento novo nasce com o dia de atendimento ligado: o hint mostra
+      // o D+ em que o item de fato cai.
+      alinharSemana
       onChange={(chave, patch) => {
         const index = Number(chave);
         for (const [campo, valor] of Object.entries(patch)) {
@@ -55,7 +58,8 @@ export function ProtocolClinicalGrid({
             início do tratamento, definida em cada orçamento — e cada orçamento
             pode ajustar estes campos para o paciente dele sem alterar o
             protocolo. Item sem via faz o cronograma deduzir pelo nome e marcar
-            para conferência.
+            para conferência. No cronograma, cada data cai no mesmo dia da
+            semana do início (até 3 dias antes ou depois da conta exata).
           </span>
         </p>
       }

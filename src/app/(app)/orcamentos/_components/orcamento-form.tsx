@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition, type ComponentProps } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -38,6 +38,7 @@ import { formatCurrency, parseCurrency } from "@/lib/currency";
 import { formatCurrencyInput, formatCPF, formatPhoneNumber } from "@/lib/masks";
 import type { PatientSource } from "@/lib/orcamento/patient-source";
 import type { Via } from "@/lib/prescricao/enums";
+import { diaDaSemana } from "@/lib/prescricao/project";
 import type { AjusteItem, PrescricaoAjustes } from "@/lib/prescricao/types";
 import { cn } from "@/lib/utils";
 import { createOrcamentoSchema } from "@/lib/validations";
@@ -157,8 +158,6 @@ export function OrcamentoForm({
   // segue via delta (abaixo). O servidor remonta o retrato a partir de
   // `protocol_items` com essa escolha (`montarItensProtocolo`).
   const [protocolos, setProtocolos] = useState<ProtocoloNoOrcamento[]>([]);
-  // Para o seletor "Adicionar protocolo" voltar ao placeholder a cada adição.
-  const [addProtocoloKey, setAddProtocoloKey] = useState(0);
 
   // Itens INCLUÍDOS de todos os protocolos — o que vai para totais, grade
   // clínica, proposta da Feegow e retrato.
@@ -381,7 +380,6 @@ export function OrcamentoForm({
   };
 
   const onAddProtocol = (id: string) => {
-    setAddProtocoloKey((k) => k + 1);
     if (protocolos.some((p) => p.id === id)) return;
     const protocol = protocols.find((p) => p.id === id);
     if (!protocol) return;
@@ -452,21 +450,13 @@ export function OrcamentoForm({
       ),
     );
 
-  const onQuantidadeItem = (protocoloId: string, ref: string, raw: string) => {
-    const n = Math.trunc(Number(raw));
-    if (!Number.isFinite(n)) return;
-    atualizarItem(protocoloId, ref, { quantity: Math.min(999, Math.max(1, n)) });
-  };
+  const onQuantidadeItem = (protocoloId: string, ref: string, quantity: number) =>
+    atualizarItem(protocoloId, ref, { quantity });
 
-  const onRetirarItem = (protocoloId: string, ref: string) => {
+  // Retirar NÃO apaga o ajuste clínico do item: restaurar o traz de volta.
+  // Só o que está incluído vai no payload (e o servidor filtra de novo).
+  const onRetirarItem = (protocoloId: string, ref: string) =>
     atualizarItem(protocoloId, ref, { incluido: false });
-    setAjustes((prev) => {
-      if (!(ref in prev)) return prev;
-      const next = { ...prev };
-      delete next[ref];
-      return next;
-    });
-  };
 
   const onRestaurarItem = (protocoloId: string, ref: string) =>
     atualizarItem(protocoloId, ref, { incluido: true });
@@ -749,7 +739,11 @@ export function OrcamentoForm({
       paciente_alergias: values.paciente_alergias?.trim() || null,
       observacoes: values.observacoes?.trim() || null,
       prescricao_inicio: values.prescricao_inicio || null,
-      prescricao_ajustes: ajustes,
+      prescricao_ajustes: Object.fromEntries(
+        Object.entries(ajustes).filter(([ref]) =>
+          protocolItems.some((i) => i.id === ref),
+        ),
+      ),
     };
 
     const shouldSendContract = submitAction === "save_and_send";
@@ -1096,13 +1090,33 @@ export function OrcamentoForm({
               </div>
             )}
             <Select
-              key={addProtocoloKey}
+              // Valor controlado vazio: volta ao placeholder a cada adição
+              // sem remontar (remontar jogava o foco para o <body>).
+              value=""
               onValueChange={onAddProtocol}
               disabled={protocols.every((p) =>
                 protocolos.some((q) => q.id === p.id),
               )}
             >
-              <SelectTrigger className="mt-2">
+              <SelectTrigger
+                className="mt-2"
+                // Com o seletor FECHADO, o Radix trata letra digitada como
+                // busca e chama onValueChange com o primeiro item que casa.
+                // Com value="" cada nova letra adicionaria mais um protocolo
+                // ("bot" → Bioestimulador, Botox, Botox Premium). Aberto, a
+                // busca na lista continua funcionando.
+                onKeyDown={(e) => {
+                  if (
+                    e.key.length === 1 &&
+                    e.key !== " " &&
+                    !e.ctrlKey &&
+                    !e.altKey &&
+                    !e.metaKey
+                  ) {
+                    e.preventDefault();
+                  }
+                }}
+              >
                 <SelectValue
                   placeholder={
                     protocolos.length > 0
@@ -1458,13 +1472,10 @@ export function OrcamentoForm({
                               </span>
                             )}
                           </span>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={999}
+                          <QuantidadeInput
                             value={p.quantity}
-                            onChange={(e) =>
-                              onQuantidadeItem(protocolo.id, p.id, e.target.value)
+                            onCommit={(n) =>
+                              onQuantidadeItem(protocolo.id, p.id, n)
                             }
                             className="h-8 w-20 text-right"
                             aria-label={`Quantidade de ${p.procedure_name}`}
@@ -1617,8 +1628,18 @@ export function OrcamentoForm({
                 {...form.register("prescricao_inicio")}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                D0 do cronograma. As sessões seguintes usam o intervalo de
-                cada item.
+                D0 do cronograma.
+                {diaDaSemana(prescricaoInicio ?? "") ? (
+                  <>
+                    {" "}
+                    Dia de atendimento:{" "}
+                    <strong>{diaDaSemana(prescricaoInicio ?? "")}</strong>. Cada
+                    aplicação cai nesse dia da semana, na data mais próxima do
+                    intervalo do item.
+                  </>
+                ) : (
+                  " As sessões seguintes usam o intervalo de cada item."
+                )}
               </p>
             </div>
             <div className="md:col-span-2">
@@ -1666,6 +1687,9 @@ export function OrcamentoForm({
             <ClinicalGrid
               itens={linhasClinicas}
               inicio={prescricaoInicio}
+              // Orçamento novo nasce com o dia de atendimento ligado
+              // (`prescricao_alinhar_semana` default true).
+              alinharSemana
               onChange={onPatchClinico}
               onResetar={onResetarClinico}
             />
@@ -1713,5 +1737,40 @@ export function OrcamentoForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Quantidade de um item de protocolo no orçamento. Guarda o TEXTO enquanto
+ * a pessoa digita e só repassa número inteiro ≥ 1: um input controlado pelo
+ * número voltava para "1" ao apagar o último dígito, e o próximo dígito era
+ * somado a ele (apagar 8 e digitar 3 dava 13). Ao sair do campo, mostra de
+ * novo o valor válido. Sem teto: o protocolo também não tem.
+ */
+function QuantidadeInput({
+  value,
+  onCommit,
+  ...rest
+}: { value: number; onCommit: (n: number) => void } & Omit<
+  ComponentProps<typeof Input>,
+  "value" | "onChange" | "type" | "min"
+>) {
+  const [rascunho, setRascunho] = useState<string | null>(null);
+  return (
+    <Input
+      {...rest}
+      type="number"
+      min={1}
+      step={1}
+      inputMode="numeric"
+      value={rascunho ?? String(value)}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setRascunho(raw);
+        const n = Number(raw);
+        if (raw.trim() !== "" && Number.isInteger(n) && n >= 1) onCommit(n);
+      }}
+      onBlur={() => setRascunho(null)}
+    />
   );
 }

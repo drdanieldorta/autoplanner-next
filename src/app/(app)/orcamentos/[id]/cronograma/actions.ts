@@ -16,6 +16,7 @@ const SalvarSchema = z.object({
   // Schema compartilhado com a criação do orçamento DE PROPÓSITO: como
   // `salvarAjustes` faz replace, um campo aceito só lá seria apagado aqui.
   ajustes: prescricaoAjustesSchema,
+  alinhar_semana: z.boolean(),
 });
 
 export type CronogramaFormState =
@@ -60,6 +61,7 @@ export async function salvarCronograma(
       inicio: parsed.data.inicio,
       observacoes: parsed.data.observacoes ?? null,
       alergias: parsed.data.alergias ?? null,
+      alinharSemana: parsed.data.alinhar_semana,
     });
   } catch (err) {
     return {

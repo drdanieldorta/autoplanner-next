@@ -73,7 +73,9 @@ const BodySchema = z.object({
           .array(
             z.object({
               ref: z.string().uuid(),
-              quantity: z.number().int().min(1).max(999),
+              // Sem teto: `protocolItemSchema` também não tem, e um protocolo
+              // salvo com 1000 não pode virar orçamento impossível.
+              quantity: z.number().int().positive(),
             }),
           )
           .min(1)

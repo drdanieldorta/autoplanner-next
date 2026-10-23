@@ -29,10 +29,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { VIA_LABEL, VIAS, type Via } from "@/lib/prescricao/enums";
 import {
+  addDiasISO,
+  alinharAoDiaDeAtendimento,
   avisosDoPlano,
+  diaDaSemana,
+  noDiaDaSemana,
   projetarPlano,
   type ItemCru,
 } from "@/lib/prescricao/project";
@@ -68,6 +73,8 @@ type Props = {
     observacoes: string;
     alergias: string;
     ajustes: PrescricaoAjustes;
+    /** `propostas.prescricao_alinhar_semana`. */
+    alinharSemana: boolean;
   };
   jaEnviada: boolean;
 };
@@ -110,6 +117,7 @@ export function CronogramaEditor({
   const [observacoes, setObservacoes] = useState(inicial.observacoes);
   const [alergias, setAlergias] = useState(inicial.alergias);
   const [ajustes, setAjustes] = useState<PrescricaoAjustes>(inicial.ajustes);
+  const [alinharSemana, setAlinharSemana] = useState(inicial.alinharSemana);
   const [aberto, setAberto] = useState<string | null>(null);
 
   // MESMA função do servidor ⇒ impossível o preview divergir do PDF.
@@ -127,14 +135,17 @@ export function CronogramaEditor({
         proposta_ref: contexto.proposta_ref,
         revisao: contexto.revisao,
         gerado_em: new Date().toISOString(),
+        alinharSemana,
       }),
-    [inicio, itens, ajustes, contexto, alergias, observacoes],
+    [inicio, itens, ajustes, contexto, alergias, observacoes, alinharSemana],
   );
 
   const avisos = useMemo(
-    () => avisosDoPlano(plano, ajustes),
-    [plano, ajustes],
+    () => avisosDoPlano(plano, ajustes, { alinharSemana }),
+    [plano, ajustes, alinharSemana],
   );
+
+  const diaInicio = diaDaSemana(inicio);
 
   const temAjuste = Object.keys(ajustes).length > 0;
 
@@ -195,6 +206,7 @@ export function CronogramaEditor({
         observacoes: observacoes.trim() || null,
         alergias: alergias.trim() || null,
         ajustes,
+        alinhar_semana: alinharSemana,
       });
       if (!res || !res.ok) {
         toast.error(res?.error ?? "Erro ao salvar o cronograma");
@@ -260,7 +272,8 @@ export function CronogramaEditor({
                 onChange={(e) => setInicio(e.target.value)}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                D0. Mover esta data desloca todo o cronograma.
+                D0{diaInicio ? ` (${diaInicio})` : ""}. Mover esta data
+                desloca todo o cronograma.
               </p>
             </div>
             <div className="md:col-span-2">
@@ -271,6 +284,24 @@ export function CronogramaEditor({
                 onChange={(e) => setAlergias(e.target.value)}
                 placeholder="Ex: dipirona, AAS — em branco se não avaliado"
               />
+            </div>
+          </div>
+          <div className="flex items-start gap-3 rounded-md border p-3">
+            <Switch
+              id="alinhar-semana"
+              checked={alinharSemana}
+              onCheckedChange={setAlinharSemana}
+              className="mt-0.5"
+            />
+            <div className="space-y-0.5">
+              <Label htmlFor="alinhar-semana" className="cursor-pointer">
+                Atender sempre no mesmo dia da semana
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {alinharSemana
+                  ? `Toda aplicação cai ${noDiaDaSemana(inicio) || "no dia da semana do início"}: a data do protocolo vai para o dia mais próximo, até 3 dias antes ou depois. Datas remarcadas à mão não mudam.`
+                  : "Desligado: as datas seguem a conta exata do intervalo do protocolo."}
+              </p>
             </div>
           </div>
           <div>
@@ -310,7 +341,14 @@ export function CronogramaEditor({
         </CardHeader>
         <CardContent className="space-y-5">
           {plano.itens.map((item) => {
-            const passo = item.interval_days > 0 ? item.interval_days : 7;
+            // Com o dia de atendimento, adiar também cai nele: "a cada 30
+            // dias" adia 28. Abaixo de uma semana o ritmo é o do protocolo.
+            const passo =
+              alinharSemana && item.interval_days >= 7
+                ? alinharAoDiaDeAtendimento(item.interval_days)
+                : item.interval_days > 0
+                  ? item.interval_days
+                  : 7;
             return (
               <div key={item.ref} className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
@@ -355,6 +393,11 @@ export function CronogramaEditor({
                         <PopoverTrigger asChild>
                           <button
                             type="button"
+                            title={
+                              sessao.alinhada
+                                ? `No dia de atendimento. Pela conta exata do protocolo seria ${brData(addDiasISO(inicio, item.inicio_dias + (sessao.n - 1) * item.interval_days))}.`
+                                : undefined
+                            }
                             className={`rounded-md border px-2.5 py-1.5 text-xs text-left transition-colors hover:bg-accent ${
                               sessao.ajustada
                                 ? "border-accent-gold bg-accent-gold/10"
