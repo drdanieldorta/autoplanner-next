@@ -3,7 +3,7 @@
  * NÃO adicionar `import "server-only"`.
  */
 
-import type { AjusteItem, PlanoExecucao, PrescricaoAjustes } from "./types";
+import type { AjusteItem, PrescricaoAjustes } from "./types";
 
 /**
  * Descarta do delta tudo que não ajusta nada.
@@ -52,40 +52,4 @@ export function limparAjustes(
   }
 
   return limpos;
-}
-
-/**
- * Tira do delta as sessões gravadas na própria data padrão do plano.
- *
- * `setSessao` e `empurrarDaqui` gravam offsets absolutos, e um offset igual
- * ao padrão não aparece como ajustado (sem borda, sem "Voltar ao padrão").
- * Se a data padrão mudar, como ao ligar ou desligar o dia de atendimento,
- * ele viraria remarcação manual invisível, presa na data do modo anterior.
- * Podar antes da troca e ao salvar não muda a projeção nem o hash.
- */
-export function semSessoesNoPadrao(
-  ajustes: PrescricaoAjustes,
-  plano: PlanoExecucao,
-): PrescricaoAjustes {
-  let mudou = false;
-  const out: PrescricaoAjustes = { ...ajustes };
-  for (const item of plano.itens) {
-    const atual = out[item.ref];
-    if (!atual?.sessoes) continue;
-    const sessoes = { ...atual.sessoes };
-    for (const s of item.sessoes) {
-      if (!s.ajustada && String(s.n) in sessoes) {
-        delete sessoes[String(s.n)];
-        mudou = true;
-      }
-    }
-    const { sessoes: _antigas, ...resto } = atual;
-    void _antigas;
-    if (Object.keys(sessoes).length) out[item.ref] = { ...resto, sessoes };
-    // Sem nada além das sessões podadas, o item sai do delta: um `{}` faria o
-    // editor oferecer "Voltar ao protocolo" sem haver ajuste.
-    else if (Object.keys(resto).length) out[item.ref] = resto;
-    else delete out[item.ref];
-  }
-  return mudou ? out : ajustes;
 }

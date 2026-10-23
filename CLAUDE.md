@@ -644,9 +644,12 @@ ligado, `expandirSessoes` leva cada data PADRÃO ao múltiplo de 7 mais próximo
   "cai no dia": em item curto o ciclo inteiro desloca. Texto que afirme a regra
   (nota do PDF, tooltip, chave, hint) precisa trazer as exceções — item curto e
   remarcação fora do dia —, senão a folha contradiz as próprias linhas.
-- **Trocar o modo poda o delta** (`semSessoesNoPadrao`, também ao salvar): uma
-  sessão gravada na própria data padrão não aparece como ajustada, e ao mudar o
-  padrão viraria remarcação manual invisível, presa na data do modo anterior.
+- **Trocar o modo NÃO mexe no delta.** Uma data gravada à mão que coincide com a
+  data padrão do modo atual não é `ajustada` no plano, mas o editor a mostra
+  FIXADA (borda e "Voltar ao padrão", pela chave em `ajustes.sessoes`): sem isso
+  ela ficaria presa na data do outro modo sem ninguém ver. Apagar nessa hora
+  perdia a remarcação na ida e volta da chave. Remarcar de volta para a data
+  padrão (`offsetPadraoDaSessao`, a mesma conta da projeção) apaga a chave.
 - **Folha já gerada ficou com `false`** (migration): o snapshot é congelado e as
   enviadas não saem do prontuário. Ligar nelas é a chave do editor. Leitura só
   liga com `=== true`.
