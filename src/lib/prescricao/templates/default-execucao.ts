@@ -325,9 +325,17 @@ export function renderFolhaExecucao(
   // Dia de atendimento: as datas da agenda não batem com "a cada N dias" da
   // tabela de itens quando foram arredondadas, e a enfermagem precisa saber
   // por quê. Só aparece quando alguma data de fato mudou, então folha sem a
-  // regra (ou com todo intervalo em semanas) sai idêntica.
+  // regra (ou com todo intervalo em semanas) sai idêntica. As exceções vão
+  // junto: a nota não pode afirmar a regra para uma linha que não a segue.
+  const diaInicio = diaDaSemana(plano.inicio);
+  const temCurto = plano.itens.some(
+    (i) => i.interval_days > 0 && i.interval_days < 7 && i.quantity > 1,
+  );
+  const temRemarcadaFora = plano.itens.some((i) =>
+    i.sessoes.some((x) => x.ajustada && diaDaSemana(x.data) !== diaInicio),
+  );
   const notaAgenda = plano.itens.some((i) => i.sessoes.some((x) => x.alinhada))
-    ? `<div style="font-size:9px;color:#555;margin:0 0 3px 0">Datas no dia de atendimento (${escapeHtml(diaDaSemana(plano.inicio))}): cada data do intervalo do protocolo foi levada a esse dia da semana, até 3 dias antes ou depois.</div>`
+    ? `<div style="font-size:9px;color:#555;margin:0 0 3px 0">Datas no dia de atendimento (${escapeHtml(diaInicio)}): as datas do protocolo foram levadas a esse dia da semana, até 3 dias antes ou depois.${temCurto ? " Item com intervalo menor que uma semana só começa nesse dia e depois segue o intervalo do protocolo." : ""}${temRemarcadaFora ? " Datas remarcadas pela equipe podem cair em outro dia." : ""}</div>`
     : "";
 
   // Aviso de substituição no CORPO do documento, não só no nome do

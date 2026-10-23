@@ -71,9 +71,12 @@ export type PlanoSessao = {
   /** True quando esta sessão teve a data alterada nesta folha. */
   ajustada: boolean;
   /**
-   * Presente (true) quando a data padrão foi levada ao dia de atendimento e
-   * por isso difere da do protocolo. Ausente em vez de false de propósito: o
-   * snapshot e o hash de toda folha sem a regra seguem idênticos.
+   * Presente (true) quando a regra do dia de atendimento mudou a data padrão
+   * e por isso ela difere da do protocolo. NÃO quer dizer "cai no dia de
+   * atendimento": em item com intervalo menor que uma semana o ciclo inteiro
+   * desloca com o começo, e só o começo cai no dia. Ausente em vez de false
+   * de propósito: o snapshot e o hash de toda folha sem a regra seguem
+   * idênticos.
    */
   alinhada?: true;
   offset_dias: number;

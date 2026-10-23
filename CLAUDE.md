@@ -640,7 +640,13 @@ ligado, `expandirSessoes` leva cada data PADRÃO ao múltiplo de 7 mais próximo
 - **`PlanoSessao.alinhada` só existe quando a data mudou** (ausente, não `false`):
   folha sem a regra, ou com todo intervalo em semanas, sai com o MESMO hash e o
   mesmo HTML de antes (verificado contra o código anterior). A nota da agenda no
-  PDF também só aparece nesse caso.
+  PDF também só aparece nesse caso. `alinhada` é "a regra mudou a data", NÃO
+  "cai no dia": em item curto o ciclo inteiro desloca. Texto que afirme a regra
+  (nota do PDF, tooltip, chave, hint) precisa trazer as exceções — item curto e
+  remarcação fora do dia —, senão a folha contradiz as próprias linhas.
+- **Trocar o modo poda o delta** (`semSessoesNoPadrao`, também ao salvar): uma
+  sessão gravada na própria data padrão não aparece como ajustada, e ao mudar o
+  padrão viraria remarcação manual invisível, presa na data do modo anterior.
 - **Folha já gerada ficou com `false`** (migration): o snapshot é congelado e as
   enviadas não saem do prontuário. Ligar nelas é a chave do editor. Leitura só
   liga com `=== true`.

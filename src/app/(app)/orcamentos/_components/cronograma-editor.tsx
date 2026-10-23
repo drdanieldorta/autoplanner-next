@@ -41,6 +41,7 @@ import {
   projetarPlano,
   type ItemCru,
 } from "@/lib/prescricao/project";
+import { semSessoesNoPadrao } from "@/lib/prescricao/ajustes";
 import type { PrescricaoAjustes } from "@/lib/prescricao/types";
 import { salvarCronograma } from "../[id]/cronograma/actions";
 
@@ -205,7 +206,7 @@ export function CronogramaEditor({
         inicio,
         observacoes: observacoes.trim() || null,
         alergias: alergias.trim() || null,
-        ajustes,
+        ajustes: semSessoesNoPadrao(ajustes, plano),
         alinhar_semana: alinharSemana,
       });
       if (!res || !res.ok) {
@@ -290,7 +291,11 @@ export function CronogramaEditor({
             <Switch
               id="alinhar-semana"
               checked={alinharSemana}
-              onCheckedChange={setAlinharSemana}
+              onCheckedChange={(ligar) => {
+                // Poda com o plano do modo ATUAL, antes de a data padrão mudar.
+                setAjustes((prev) => semSessoesNoPadrao(prev, plano));
+                setAlinharSemana(ligar);
+              }}
               className="mt-0.5"
             />
             <div className="space-y-0.5">
@@ -299,7 +304,7 @@ export function CronogramaEditor({
               </Label>
               <p className="text-xs text-muted-foreground">
                 {alinharSemana
-                  ? `Toda aplicação cai ${noDiaDaSemana(inicio) || "no dia da semana do início"}: a data do protocolo vai para o dia mais próximo, até 3 dias antes ou depois. Datas remarcadas à mão não mudam.`
+                  ? `As aplicações caem ${noDiaDaSemana(inicio) || "no dia da semana do início"}: a data do protocolo vai para o dia mais próximo, até 3 dias antes ou depois. Item com intervalo menor que uma semana só começa nesse dia. Datas remarcadas à mão não mudam.`
                   : "Desligado: as datas seguem a conta exata do intervalo do protocolo."}
               </p>
             </div>
@@ -395,7 +400,9 @@ export function CronogramaEditor({
                             type="button"
                             title={
                               sessao.alinhada
-                                ? `No dia de atendimento. Pela conta exata do protocolo seria ${brData(addDiasISO(inicio, item.inicio_dias + (sessao.n - 1) * item.interval_days))}.`
+                                ? // Item com intervalo menor que uma semana desloca
+                                  // o ciclo inteiro, mas só o começo cai no dia.
+                                  `${diaDaSemana(sessao.data) === diaInicio ? "No dia de atendimento." : "O ciclo começa no dia de atendimento e segue o intervalo do protocolo."} Pela conta exata do protocolo seria ${brData(addDiasISO(inicio, item.inicio_dias + (sessao.n - 1) * item.interval_days))}.`
                                 : undefined
                             }
                             className={`rounded-md border px-2.5 py-1.5 text-xs text-left transition-colors hover:bg-accent ${

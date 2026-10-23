@@ -1633,9 +1633,10 @@ export function OrcamentoForm({
                   <>
                     {" "}
                     Dia de atendimento:{" "}
-                    <strong>{diaDaSemana(prescricaoInicio ?? "")}</strong>. Cada
-                    aplicação cai nesse dia da semana, na data mais próxima do
-                    intervalo do item.
+                    <strong>{diaDaSemana(prescricaoInicio ?? "")}</strong>. As
+                    aplicações caem nesse dia da semana, na data mais próxima
+                    da conta de cada item (item com intervalo menor que uma
+                    semana só começa nele).
                   </>
                 ) : (
                   " As sessões seguintes usam o intervalo de cada item."
