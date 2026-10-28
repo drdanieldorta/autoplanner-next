@@ -8,6 +8,7 @@ import {
 import {
   authentique,
   AuthentiqueError,
+  signatariosDoDocumento,
 } from "@/lib/integrations/authentique";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { generatePdfFromHtml } from "@/lib/integrations/pdf";
@@ -126,7 +127,10 @@ export async function POST(req: Request) {
       ],
     });
 
-    const signingLink = result.signatures[0]?.link?.short_link ?? null;
+    // `signatures[0]` é o dono da conta (sem link); o link é o do paciente.
+    const signingLink =
+      signatariosDoDocumento(result.signatures).find((s) => s.link?.short_link)
+        ?.link?.short_link ?? null;
 
     // Arquiva o PDF só depois do envio dar certo — se a Authentique
     // recusar, não queremos lixo no bucket.

@@ -9,6 +9,7 @@ import {
   authentique,
   type DocumentSignatureStatus,
 } from "@/lib/integrations/authentique";
+import { registrarAssinatura } from "@/lib/contracts/assinatura";
 import { pacienteDaFeegow, situacaoDoAnexo } from "@/lib/contracts/feegow-anexo";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -84,6 +85,18 @@ export async function GET(
           rejectedReason = info.rejectedReason;
         }
         signingLink = storedLink ?? info.signingLink;
+
+        // Assinatura confirmada agora: grava, para a listagem e as próximas
+        // aberturas não dependerem da Autentique (nem do webhook chegar).
+        if (needsLiveCheck && info.status === "signed" && info.signedAt) {
+          await registrarAssinatura({
+            propostaId,
+            documentId: documentId!,
+            signedAt: info.signedAt,
+          }).catch(() => {
+            // Best-effort: a tela já mostra "Assinado" pela consulta.
+          });
+        }
       } catch {
         // Mantém `status` como null: a UI mostra "não foi possível
         // consultar" em vez de afirmar que está pendente.

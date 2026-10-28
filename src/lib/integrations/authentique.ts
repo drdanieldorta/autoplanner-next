@@ -34,10 +34,11 @@ type CreateDocumentResult = {
   id: string;
   name: string;
   signatures: Array<{
-    name: string;
+    name: string | null;
     email: string | null;
-    action: { name: string };
-    link: { short_link: string };
+    // O DONO DA CONTA também vem na lista, com `action: null` e sem link.
+    action: { name: string } | null;
+    link: { short_link: string | null } | null;
     user: { id: string; name: string; email: string | null } | null;
   }>;
 };
@@ -84,6 +85,83 @@ type RawSignature = {
 };
 
 type RawDocument = { signatures?: RawSignature[] | null };
+
+const SEM_SITUACAO: DocumentInfo = {
+  status: null,
+  signedAt: null,
+  viewedAt: null,
+  rejectedAt: null,
+  rejectedReason: null,
+  signingLink: null,
+};
+
+/**
+ * Quem precisa assinar: as assinaturas com ação declarada.
+ *
+ * ⚠️ A Autentique lista o DONO DA CONTA em `signatures`, com `action: null`,
+ * sem link e sem nunca assinar (conferido em produção em 2026-10-28, em
+ * todos os documentos). Tratar ação ausente como "SIGN" fazia todo contrato
+ * ficar "aguardando" para sempre: o painel nunca mostrava a assinatura e o
+ * webhook, que confirma por aqui, nunca carimbava.
+ */
+export function signatariosDoDocumento<T extends RawSignature>(all: T[]): T[] {
+  const comAcao = all.filter((s) => !!s.action?.name);
+  const assinam = comAcao.filter(
+    (s) => s.action!.name!.toUpperCase() === "SIGN",
+  );
+  return assinam.length > 0 ? assinam : comAcao;
+}
+
+/**
+ * Situação consolidada a partir de `document.signatures`. Função pura,
+ * separada da consulta para ser testada com o formato real da API.
+ */
+export function situacaoDoDocumento(all: RawSignature[]): DocumentInfo {
+  const relevant = signatariosDoDocumento(all);
+  if (relevant.length === 0) return SEM_SITUACAO;
+
+  const rejectedSig = relevant.find((s) => s.rejected?.created_at);
+  const bioRejectedSig = relevant.find((s) => s.biometric_rejected?.created_at);
+  const allSigned = relevant.every((s) => !!s.signed?.created_at);
+  // Assinou mas a biometria ainda não foi aprovada. Sem tratar isso, o
+  // painel diria "aguardando assinatura" para quem já assinou.
+  const pendingBiometric = relevant.some(
+    (s) => s.signed_unapproved?.created_at && !s.signed?.created_at,
+  );
+  const viewedSig = relevant.find((s) => s.viewed?.created_at);
+
+  const status: DocumentSignatureStatus = rejectedSig
+    ? "rejected"
+    : bioRejectedSig
+      ? "biometric_rejected"
+      : allSigned
+        ? "signed"
+        : pendingBiometric
+          ? "pending_biometric"
+          : viewedSig
+            ? "viewed"
+            : "pending";
+
+  // Documento com vários signatários só está assinado quando o último
+  // assina — por isso o mais recente, não o primeiro.
+  const signedAt = allSigned
+    ? (relevant
+        .map((s) => s.signed?.created_at ?? null)
+        .filter((d): d is string => !!d)
+        .sort()
+        .at(-1) ?? null)
+    : null;
+
+  return {
+    status,
+    signedAt,
+    viewedAt: viewedSig?.viewed?.created_at ?? null,
+    rejectedAt: rejectedSig?.rejected?.created_at ?? null,
+    rejectedReason: rejectedSig?.rejected?.reason ?? null,
+    signingLink:
+      relevant.find((s) => s.link?.short_link)?.link?.short_link ?? null,
+  };
+}
 
 export function authentique(token: string) {
   if (!token) {
@@ -261,77 +339,15 @@ export function authentique(token: string) {
 
     async getDocumentInfo(documentId: string): Promise<DocumentInfo> {
       const id = documentId.replace(/"/g, "");
-      const unknown: DocumentInfo = {
-        status: null,
-        signedAt: null,
-        viewedAt: null,
-        rejectedAt: null,
-        rejectedReason: null,
-        signingLink: null,
-      };
-
       try {
         const query = `query { document(id: "${id}") { id signatures { name action { name } link { short_link } viewed { created_at } signed { created_at } rejected { created_at reason } signed_unapproved { created_at } biometric_rejected { created_at } } } }`;
         const res = await fetchGraphql(JSON.stringify({ query }), {
           "Content-Type": "application/json",
         });
         const doc = (res.data as { document: RawDocument | null }).document;
-
-        const all = doc?.signatures ?? [];
-        if (all.length === 0) return unknown;
-
-        // Só quem precisa assinar conta para o status. Signatário sem
-        // `action` declarada é tratado como signatário.
-        const signers = all.filter(
-          (s) => (s.action?.name ?? "SIGN").toUpperCase() === "SIGN",
-        );
-        const relevant = signers.length > 0 ? signers : all;
-
-        const rejectedSig = relevant.find((s) => s.rejected?.created_at);
-        const bioRejectedSig = relevant.find(
-          (s) => s.biometric_rejected?.created_at,
-        );
-        const allSigned = relevant.every((s) => !!s.signed?.created_at);
-        // Assinou mas a biometria ainda não foi aprovada. Sem tratar
-        // isso, o painel diria "aguardando assinatura" para quem já
-        // assinou.
-        const pendingBiometric = relevant.some(
-          (s) => s.signed_unapproved?.created_at && !s.signed?.created_at,
-        );
-        const viewedSig = relevant.find((s) => s.viewed?.created_at);
-
-        const status: DocumentSignatureStatus = rejectedSig
-          ? "rejected"
-          : bioRejectedSig
-            ? "biometric_rejected"
-            : allSigned
-              ? "signed"
-              : pendingBiometric
-                ? "pending_biometric"
-                : viewedSig
-                  ? "viewed"
-                  : "pending";
-
-        // Documento com vários signatários só está assinado quando o
-        // último assina — por isso o mais recente, não o primeiro.
-        const signedAt = allSigned
-          ? relevant
-              .map((s) => s.signed?.created_at ?? null)
-              .filter((d): d is string => !!d)
-              .sort()
-              .at(-1) ?? null
-          : null;
-
-        return {
-          status,
-          signedAt,
-          viewedAt: viewedSig?.viewed?.created_at ?? null,
-          rejectedAt: rejectedSig?.rejected?.created_at ?? null,
-          rejectedReason: rejectedSig?.rejected?.reason ?? null,
-          signingLink: relevant[0]?.link?.short_link ?? null,
-        };
+        return situacaoDoDocumento(doc?.signatures ?? []);
       } catch {
-        return unknown;
+        return SEM_SITUACAO;
       }
     },
   };
