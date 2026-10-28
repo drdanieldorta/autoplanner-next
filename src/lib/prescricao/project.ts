@@ -118,6 +118,33 @@ export function noDiaDaSemana(yyyyMmDd: string): string {
   return `${dia === "sábado" || dia === "domingo" ? "no" : "na"} ${dia}`;
 }
 
+/**
+ * Data padrão da sessão `n` (1-based, índice ORIGINAL) de um item, em dias a
+ * partir do D0. É a conta de `expandirSessoes`, exportada para o editor saber
+ * quando uma remarcação voltou ao padrão.
+ */
+export function offsetPadraoDaSessao(
+  item: Pick<PlanoItemFonte, "inicio_dias" | "interval_days">,
+  n: number,
+  alinharSemana: boolean,
+): number {
+  const idx = item.interval_days === 0 ? 0 : n - 1;
+  const bruto = item.inicio_dias + idx * item.interval_days;
+  if (!alinharSemana) return bruto;
+  // Intervalo de uma semana ou mais: arredonda o offset ABSOLUTO, não o
+  // intervalo. "A cada 30 dias" vira 28, 63, 91…: cada data fica a até 3
+  // dias da do protocolo e o erro não se acumula ao longo do tratamento.
+  // Duas sessões do item nunca caem no mesmo dia (offsets a 7+ dias de
+  // distância arredondam para semanas distintas).
+  if (item.interval_days === 0 || item.interval_days >= SEMANA) {
+    return alinharAoDiaDeAtendimento(bruto);
+  }
+  // Menos de uma semana: o paciente vem mais de uma vez por semana, e
+  // alinhar cada sessão empilharia duas do mesmo item na mesma visita. Só
+  // o começo do ciclo vai ao dia de atendimento; o ritmo do protocolo segue.
+  return alinharAoDiaDeAtendimento(item.inicio_dias) + idx * item.interval_days;
+}
+
 /** Normaliza um item cru, resolvendo a via (banco → heurístico → null). */
 export function normalizarItem(raw: ItemCru): PlanoItemFonte {
   const viaBanco = raw.via as Via | null | undefined;
@@ -158,26 +185,10 @@ function expandirSessoes(
 ): PlanoSessao[] {
   // Data padrão da sessão `idx` (0-based): a do protocolo, ou a do dia de
   // atendimento mais próximo dela.
-  const padraoDe = (idx: number): { bruto: number; padrao: number } => {
-    const bruto = item.inicio_dias + idx * item.interval_days;
-    if (!alinharSemana) return { bruto, padrao: bruto };
-    // Intervalo de uma semana ou mais: arredonda o offset ABSOLUTO, não o
-    // intervalo. "A cada 30 dias" vira 28, 63, 91…: cada data fica a até 3
-    // dias da do protocolo e o erro não se acumula ao longo do tratamento.
-    // Duas sessões do item nunca caem no mesmo dia (offsets a 7+ dias de
-    // distância arredondam para semanas distintas).
-    if (item.interval_days === 0 || item.interval_days >= SEMANA) {
-      return { bruto, padrao: alinharAoDiaDeAtendimento(bruto) };
-    }
-    // Menos de uma semana: o paciente vem mais de uma vez por semana, e
-    // alinhar cada sessão empilharia duas do mesmo item na mesma visita. Só
-    // o começo do ciclo vai ao dia de atendimento; o ritmo do protocolo segue.
-    return {
-      bruto,
-      padrao:
-        alinharAoDiaDeAtendimento(item.inicio_dias) + idx * item.interval_days,
-    };
-  };
+  const padraoDe = (idx: number): { bruto: number; padrao: number } => ({
+    bruto: item.inicio_dias + idx * item.interval_days,
+    padrao: offsetPadraoDaSessao(item, idx + 1, alinharSemana),
+  });
 
   const offsetDe = (
     n: number,

@@ -38,6 +38,7 @@ import {
   avisosDoPlano,
   diaDaSemana,
   noDiaDaSemana,
+  offsetPadraoDaSessao,
   projetarPlano,
   type ItemCru,
 } from "@/lib/prescricao/project";
@@ -150,16 +151,30 @@ export function CronogramaEditor({
   const temAjuste = Object.keys(ajustes).length > 0;
 
   // ── mutadores do delta ──────────────────────────────────────────────
+  // Remarcar de volta para a data padrão APAGA a chave em vez de gravá-la.
+  // Gravada, ela seria uma data fixada igual à padrão: ao trocar o modo do
+  // dia de atendimento, ficaria presa na data do modo anterior.
+  const gravarSessao = (
+    sessoes: Record<string, number>,
+    ref: string,
+    n: number,
+    offset: number,
+  ) => {
+    const item = plano.itens.find((i) => i.ref === ref);
+    const v = Math.max(0, offset);
+    if (item && v === offsetPadraoDaSessao(item, n, alinharSemana)) {
+      delete sessoes[String(n)];
+    } else {
+      sessoes[String(n)] = v;
+    }
+  };
+
   const setSessao = (ref: string, n: number, offset: number) =>
     setAjustes((prev) => {
       const atual = prev[ref] ?? {};
-      return {
-        ...prev,
-        [ref]: {
-          ...atual,
-          sessoes: { ...(atual.sessoes ?? {}), [String(n)]: Math.max(0, offset) },
-        },
-      };
+      const sessoes = { ...(atual.sessoes ?? {}) };
+      gravarSessao(sessoes, ref, n, offset);
+      return { ...prev, [ref]: { ...atual, sessoes } };
     });
 
   /** Empurra esta sessão e todas as posteriores do mesmo item pelo delta. */
@@ -171,7 +186,7 @@ export function CronogramaEditor({
       const sessoes = { ...(atual.sessoes ?? {}) };
       for (const s of item.sessoes) {
         if (s.n >= aPartirDe) {
-          sessoes[String(s.n)] = Math.max(0, s.offset_dias + delta);
+          gravarSessao(sessoes, ref, s.n, s.offset_dias + delta);
         }
       }
       return { ...prev, [ref]: { ...atual, sessoes } };
@@ -290,6 +305,8 @@ export function CronogramaEditor({
             <Switch
               id="alinhar-semana"
               checked={alinharSemana}
+              // Trocar o modo não mexe nas datas fixadas: elas aparecem com
+              // borda mesmo quando coincidem com a nova data padrão.
               onCheckedChange={setAlinharSemana}
               className="mt-0.5"
             />
@@ -299,7 +316,7 @@ export function CronogramaEditor({
               </Label>
               <p className="text-xs text-muted-foreground">
                 {alinharSemana
-                  ? `Toda aplicação cai ${noDiaDaSemana(inicio) || "no dia da semana do início"}: a data do protocolo vai para o dia mais próximo, até 3 dias antes ou depois. Datas remarcadas à mão não mudam.`
+                  ? `As aplicações caem ${noDiaDaSemana(inicio) || "no dia da semana do início"}: a data do protocolo vai para o dia mais próximo, até 3 dias antes ou depois. Item com intervalo menor que uma semana só começa nesse dia. Datas remarcadas à mão não mudam.`
                   : "Desligado: as datas seguem a conta exata do intervalo do protocolo."}
               </p>
             </div>
@@ -384,6 +401,12 @@ export function CronogramaEditor({
                 <div className="flex flex-wrap gap-2">
                   {item.sessoes.map((sessao) => {
                     const chave = `${item.ref}#${sessao.n}`;
+                    // Data gravada à mão, mesmo igual à padrão de agora (o modo
+                    // do dia de atendimento pode ter mudado depois). Fica
+                    // visível para nenhuma data presa passar despercebida.
+                    const fixada =
+                      sessao.ajustada ||
+                      String(sessao.n) in (ajustes[item.ref]?.sessoes ?? {});
                     return (
                       <Popover
                         key={chave}
@@ -394,12 +417,16 @@ export function CronogramaEditor({
                           <button
                             type="button"
                             title={
-                              sessao.alinhada
-                                ? `No dia de atendimento. Pela conta exata do protocolo seria ${brData(addDiasISO(inicio, item.inicio_dias + (sessao.n - 1) * item.interval_days))}.`
+                              fixada && !sessao.ajustada
+                                ? "Data fixada à mão. Hoje coincide com a data padrão, mas não muda se a regra do dia de atendimento mudar."
+                                : sessao.alinhada
+                                ? // Item com intervalo menor que uma semana desloca
+                                  // o ciclo inteiro, mas só o começo cai no dia.
+                                  `${diaDaSemana(sessao.data) === diaInicio ? "No dia de atendimento." : "O ciclo começa no dia de atendimento e segue o intervalo do protocolo."} Pela conta exata do protocolo seria ${brData(addDiasISO(inicio, item.inicio_dias + (sessao.n - 1) * item.interval_days))}.`
                                 : undefined
                             }
                             className={`rounded-md border px-2.5 py-1.5 text-xs text-left transition-colors hover:bg-accent ${
-                              sessao.ajustada
+                              fixada
                                 ? "border-accent-gold bg-accent-gold/10"
                                 : "border-border"
                             }`}
@@ -492,7 +519,7 @@ export function CronogramaEditor({
                             </div>
                           </div>
 
-                          {sessao.ajustada && (
+                          {fixada && (
                             <Button
                               type="button"
                               variant="ghost"

@@ -640,7 +640,16 @@ ligado, `expandirSessoes` leva cada data PADRÃO ao múltiplo de 7 mais próximo
 - **`PlanoSessao.alinhada` só existe quando a data mudou** (ausente, não `false`):
   folha sem a regra, ou com todo intervalo em semanas, sai com o MESMO hash e o
   mesmo HTML de antes (verificado contra o código anterior). A nota da agenda no
-  PDF também só aparece nesse caso.
+  PDF também só aparece nesse caso. `alinhada` é "a regra mudou a data", NÃO
+  "cai no dia": em item curto o ciclo inteiro desloca. Texto que afirme a regra
+  (nota do PDF, tooltip, chave, hint) precisa trazer as exceções — item curto e
+  remarcação fora do dia —, senão a folha contradiz as próprias linhas.
+- **Trocar o modo NÃO mexe no delta.** Uma data gravada à mão que coincide com a
+  data padrão do modo atual não é `ajustada` no plano, mas o editor a mostra
+  FIXADA (borda e "Voltar ao padrão", pela chave em `ajustes.sessoes`): sem isso
+  ela ficaria presa na data do outro modo sem ninguém ver. Apagar nessa hora
+  perdia a remarcação na ida e volta da chave. Remarcar de volta para a data
+  padrão (`offsetPadraoDaSessao`, a mesma conta da projeção) apaga a chave.
 - **Folha já gerada ficou com `false`** (migration): o snapshot é congelado e as
   enviadas não saem do prontuário. Ligar nelas é a chave do editor. Leitura só
   liga com `=== true`.
