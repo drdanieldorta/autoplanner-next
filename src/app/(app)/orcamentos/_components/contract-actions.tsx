@@ -174,6 +174,30 @@ export function ContractActions({ propostaId, documentId }: Props) {
     };
   }, [propostaId, documentId, statusVersion]);
 
+  // Sem desfecho ainda (pendente, visualizado, biometria em análise, consulta
+  // falhou) ou anexo em curso: consulta de novo a cada 15s, só com a aba
+  // visível, por até 20 min. A assinatura aparece sem recarregar a página.
+  const aguardandoDesfecho =
+    !!status &&
+    (!["signed", "rejected", "biometric_rejected"].includes(
+      status.status ?? "",
+    ) ||
+      !!status.feegow?.emAndamento);
+  useEffect(() => {
+    if (!aguardandoDesfecho) return;
+    const inicio = Date.now();
+    const timer = setInterval(() => {
+      if (Date.now() - inicio > 20 * 60_000) {
+        clearInterval(timer);
+        return;
+      }
+      if (document.visibilityState === "visible") {
+        setStatusVersion((v) => v + 1);
+      }
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [aguardandoDesfecho]);
+
   /** Anexa o contrato assinado ao prontuário da Feegow (ato explícito). */
   const sendToFeegow = async (confirmarDuplicata = false) => {
     setSendingFeegow(true);

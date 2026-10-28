@@ -424,6 +424,26 @@ documento que não é nosso (a conta é dividida com outros sistemas) respondem 
 `ignored`**, antes de tocar no banco. 4xx só para JSON inválido e HMAC errado; 503 quando
 não dá para confirmar, para ela reenviar.
 
+**O dono da conta vem em `signatures` (2026-10-28).** Todo documento da Autentique
+lista primeiro o DONO DA CONTA, com `action: null`, sem link e sem nunca assinar
+(conferido em produção). Até 2026-10-28 o código tratava ação ausente como "SIGN":
+nenhum contrato ficava "assinado" — nem no card, nem no webhook, que confirma pela
+mesma consulta —, embora os pacientes assinassem em minutos. Signatário é só quem
+tem ação declarada (`signatariosDoDocumento` / `situacaoDoDocumento` em
+[authentique.ts](src/lib/integrations/authentique.ts), pura e testável). Pelo mesmo
+motivo, `signatures[0]` nunca é o link do paciente.
+
+**Três caminhos levam a assinatura ao painel**, do mais rápido ao de reserva:
+1. o **webhook** (instantâneo; carimba e anexa ao prontuário) — depende da clínica
+   ter cadastrado a URL na Autentique;
+2. o **card do contrato** consulta ao vivo e refaz a consulta a cada 15s enquanto não
+   há desfecho; quando acha a assinatura, grava (`registrarAssinatura`);
+3. a **listagem** (coluna "Contrato") pede `POST /api/contratos/sincronizar` ao abrir:
+   confere os pendentes dos últimos 30 dias, no máximo 15 por rodada e uma rodada por
+   minuto por empresa (a Autentique limita a 60 consultas/min).
+Os caminhos 2 e 3 **só carimbam, nunca anexam**: enquanto a clínica não troca o
+webhook, é o n8n que recebe os eventos e anexa, e a Feegow não apaga anexo.
+
 **O evento é gatilho, não prova.** Nenhuma empresa tem `webhook_secret`, então o HMAC
 (opcional) hoje não roda. Antes de carimbar, a rota confirma na API
 (`getDocumentInfo`): só carimba com `status === "signed"`, isto é, TODOS os signatários

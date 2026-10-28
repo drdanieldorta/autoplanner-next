@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Calculator, Plus, Edit2, FileText } from "lucide-react";
 
 import { requireUser } from "@/lib/auth";
-import { listPropostas } from "@/lib/services/propostas";
+import { listPropostas, type Proposta } from "@/lib/services/propostas";
 import { formatCurrency } from "@/lib/currency";
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,7 @@ import {
   MobileCardActions,
 } from "@/components/ui/mobile-card-list";
 import { PageHeader } from "../_components/page-header";
+import { SincronizarAssinaturas } from "./_components/sincronizar-assinaturas";
 import { EmptyState } from "../_components/empty-state";
 
 export const metadata = { title: "Orçamentos · InfinitePlan" };
@@ -40,6 +41,48 @@ const statusLabels: Record<number, string> = {
   4: "Em execução",
   5: "Finalizada",
 };
+
+/**
+ * Situação do contrato pela assinatura registrada (webhook, card ou a
+ * sincronização desta página). Independente do status do orçamento, que é
+ * escolhido à mão.
+ */
+function ContratoBadge({ p }: { p: Proposta }) {
+  if (p.contract_signed_at) {
+    return (
+      <Badge
+        variant="secondary"
+        className="bg-green-500/10 text-green-600 dark:text-green-400"
+        title={`Assinado em ${new Date(p.contract_signed_at).toLocaleString("pt-BR")}`}
+      >
+        Assinado
+      </Badge>
+    );
+  }
+  if (p.document_id) {
+    return (
+      <Badge variant="secondary" className="bg-muted text-muted-foreground">
+        Aguardando assinatura
+      </Badge>
+    );
+  }
+  return <span className="text-muted-foreground">—</span>;
+}
+
+/**
+ * Há contrato recente sem assinatura registrada? Só então a página pede a
+ * conferência na Autentique (mesma janela da rota de sincronização).
+ */
+function temPendenteRecente(propostas: Proposta[]): boolean {
+  const desde = Date.now() - 30 * 86_400_000;
+  return propostas.some(
+    (p) =>
+      !!p.document_id &&
+      !p.contract_signed_at &&
+      !!p.contract_sent_at &&
+      new Date(p.contract_sent_at).getTime() >= desde,
+  );
+}
 
 const statusColors: Record<number, string> = {
   1: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",
@@ -62,12 +105,14 @@ export default async function OrcamentosPage() {
   }
 
   const propostas = await listPropostas({ companyId: user.companyId });
+  const sincronizar = temPendenteRecente(propostas);
 
   const formatDate = (iso: string) =>
     new Date(iso).toLocaleDateString("pt-BR");
 
   return (
     <div className="space-y-4 md:space-y-6 p-4 md:p-6">
+      {sincronizar && <SincronizarAssinaturas />}
       <PageHeader
         title="Orçamentos"
         description="Gerencie propostas e orçamentos de procedimentos"
@@ -105,6 +150,7 @@ export default async function OrcamentosPage() {
                     <TableHead>Paciente</TableHead>
                     <TableHead>Profissional</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Contrato</TableHead>
                     <TableHead className="text-right">Valor</TableHead>
                     <TableHead>Criado em</TableHead>
                     <TableHead className="text-right">Ações</TableHead>
@@ -124,6 +170,9 @@ export default async function OrcamentosPage() {
                         >
                           {statusLabels[p.status_id ?? 1] ?? p.status ?? "—"}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <ContratoBadge p={p} />
                       </TableCell>
                       <TableCell className="text-right font-medium">
                         {formatCurrency(p.valor_total_cents)}
@@ -181,6 +230,9 @@ export default async function OrcamentosPage() {
                 <MobileCardBody>
                   <MobileCardField label="Profissional">
                     {p.profissional_nome}
+                  </MobileCardField>
+                  <MobileCardField label="Contrato">
+                    <ContratoBadge p={p} />
                   </MobileCardField>
                   <MobileCardField label="Valor">
                     {formatCurrency(p.valor_total_cents)}
