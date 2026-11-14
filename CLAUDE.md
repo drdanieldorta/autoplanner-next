@@ -159,6 +159,11 @@ Em `src/app/(app)/_components/`:
 - `<EmptyState>` — ícone + título + descrição + ação opcional.
 - `<SearchBox>` — client component, debounce 350ms, sincroniza com query string.
 - `<ComingSoon>` — placeholder genérico para rotas Fase 3+.
+- `<ComboboxBusca>` — seletor com campo de busca para listas longas (procedimentos
+  da Feegow, protocolos). Busca de `lib/busca.ts` (neutro): sem acento e sem caixa,
+  todas as palavras em qualquer ordem, quem começa pelo termo primeiro. Usado no
+  procedimento extra e no "Adicionar protocolo" do orçamento e no procedimento do
+  protocolo. `selecionadoId={null}` faz dele um seletor de "adicionar".
 
 Não recriar variantes ad-hoc dessas — usar o existente e estender se necessário.
 
@@ -698,7 +703,7 @@ como HTTP 200 com `{"success": false}`. O `fetcher` genérico só lança em `!re
 - **Mutations Supabase quebram com type "never"** no SDK atual + types gerados PostgrestVersion 13.0.5. Padrão: `.insert(payload as never)`, `.update(payload as never)`, `.upsert(payload as never)`. Quando regerarmos os types via `npm run types:supabase`, isso pode parar.
 - **Turbopack panic com CSS** em paths com espaços no Windows pode acontecer (ex: `Projetos Claude\`). Solução: `rm -rf .next` e relaunch, ou rodar com webpack via env. Build de produção não é afetado.
 - **RHF `form.watch()` viola `react-hooks/incompatible-library`.** Usar `// eslint-disable-next-line react-hooks/incompatible-library` na linha. É padrão idiomático do RHF.
-- **Radix Select com `value=""` fixo (seletor de "adicionar"):** com o seletor FECHADO, letra digitada vira busca e chama `onValueChange` com o primeiro item que casa — cada letra adicionaria um item. Barrar teclas imprimíveis no `onKeyDown` do `SelectTrigger` (ver "Adicionar protocolo" em `orcamento-form.tsx`).
+- **Radix Select com `value=""` fixo (seletor de "adicionar"):** com o seletor FECHADO, letra digitada vira busca e chama `onValueChange` com o primeiro item que casa — cada letra adicionaria um item. Para "adicionar" de lista longa, preferir `<ComboboxBusca selecionadoId={null}>` (o "Adicionar protocolo" do orçamento trocou o Select por ele em 2026-11-14); se usar Select, barrar teclas imprimíveis no `onKeyDown` do `SelectTrigger`.
 - **Toda cor de `globals.css` usada como classe precisa estar em `tailwind.config.ts`.** `--popover` existia no CSS mas não no config: `bg-popover` não gerava nada e todo Popover/Command/DropdownMenu/Tooltip ficava transparente, com o texto da página aparecendo por trás (corrigido 2026-10-22).
 - **Client Components não podem importar de arquivos com `import "server-only"`.** Quando precisar compartilhar uma constante (ex: `CONTRACT_VARIABLES`), extrair para arquivo neutro em `lib/<dominio>/variables.ts`.
 
