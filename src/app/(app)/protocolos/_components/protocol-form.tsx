@@ -4,14 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import {
-  Plus,
-  Trash2,
-  Save,
-  Check,
-  ChevronsUpDown,
-  AlertCircle,
-} from "lucide-react";
+import { Plus, Trash2, Save, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -26,22 +19,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { formatCurrency } from "@/lib/currency";
 import { parseCurrencyToCents, formatCurrencyInput } from "@/lib/masks";
-import { cn } from "@/lib/utils";
 import { createProtocolSchema } from "@/lib/validations";
 import type { ProtocolProcedureOption } from "@/lib/services/protocol-form-data";
 import { createProtocol, updateProtocol } from "../actions";
@@ -49,6 +28,7 @@ import {
   DocumentosSelector,
   type ContractOption,
 } from "@/app/(app)/_components/documentos-selector";
+import { ComboboxBusca } from "@/app/(app)/_components/combobox-busca";
 import { ProtocolClinicalGrid } from "./protocol-clinical-fields";
 
 type FormValues = z.infer<typeof createProtocolSchema>;
@@ -82,7 +62,11 @@ export function ProtocolForm({
     initialValues.items.map((item) => formatCurrency(item.value_cents)),
   );
   // Índice da linha com o combobox aberto (só um por vez).
-  const [openPicker, setOpenPicker] = useState<number | null>(null);
+  const procedureOptions = procedures.map((p) => ({
+    id: p.id,
+    nome: p.name,
+    detalhe: formatCurrency(p.value_cents),
+  }));
 
   // Com Feegow configurada, o procedimento vem obrigatoriamente do catálogo.
   // Se o catálogo veio vazio (API fora do ar), liberamos o modo manual para
@@ -132,7 +116,6 @@ export function ProtocolForm({
   const onRemoveItem = (index: number) => {
     remove(index);
     setValueInputs((prev) => prev.filter((_, i) => i !== index));
-    setOpenPicker(null);
   };
 
   /**
@@ -157,7 +140,6 @@ export function ProtocolForm({
       next[index] = formatCurrency(procedure.value_cents);
       return next;
     });
-    setOpenPicker(null);
   };
 
   const onSubmit = form.handleSubmit((values) => {
@@ -283,70 +265,20 @@ export function ProtocolForm({
                           : "Nome do procedimento *"}
                       </Label>
                       {useFeegowPicker ? (
-                        <Popover
-                          open={openPicker === index}
-                          onOpenChange={(open) =>
-                            setOpenPicker(open ? index : null)
-                          }
-                        >
-                          <PopoverTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              role="combobox"
-                              className="w-full justify-between font-normal"
-                            >
-                              <span className="truncate">
-                                {items[index]?.procedure_name ||
-                                  "Selecione um procedimento"}
-                              </span>
-                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent
-                            className="w-[--radix-popover-trigger-width] p-0"
-                            align="start"
-                          >
-                            <Command>
-                              <CommandInput placeholder="Pesquisar procedimento..." />
-                              <CommandList>
-                                <CommandEmpty>
-                                  Nenhum procedimento encontrado.
-                                </CommandEmpty>
-                                <CommandGroup>
-                                  {procedures.map((procedure) => (
-                                    <CommandItem
-                                      key={procedure.id}
-                                      value={`${procedure.name} ${procedure.id}`}
-                                      onSelect={() =>
-                                        onSelectProcedure(index, procedure)
-                                      }
-                                      className="flex items-center justify-between"
-                                    >
-                                      <div className="flex flex-col">
-                                        <span className="font-medium">
-                                          {procedure.name}
-                                        </span>
-                                        <span className="text-xs text-foreground/60">
-                                          {formatCurrency(procedure.value_cents)}
-                                        </span>
-                                      </div>
-                                      <Check
-                                        className={cn(
-                                          "ml-auto h-4 w-4",
-                                          items[index]?.procedure_id ===
-                                            procedure.id
-                                            ? "opacity-100"
-                                            : "opacity-0",
-                                        )}
-                                      />
-                                    </CommandItem>
-                                  ))}
-                                </CommandGroup>
-                              </CommandList>
-                            </Command>
-                          </PopoverContent>
-                        </Popover>
+                        <ComboboxBusca
+                          selecionadoId={items[index]?.procedure_id || null}
+                          // Procedimento que saiu do catálogo da Feegow depois
+                          // de gravado segue aparecendo pelo nome.
+                          textoSelecionado={items[index]?.procedure_name}
+                          opcoes={procedureOptions}
+                          onSelecionar={(id) => {
+                            const procedure = procedures.find((p) => p.id === id);
+                            if (procedure) onSelectProcedure(index, procedure);
+                          }}
+                          placeholder="Selecione um procedimento"
+                          placeholderBusca="Pesquisar procedimento..."
+                          vazio="Nenhum procedimento encontrado."
+                        />
                       ) : (
                         <Input
                           {...form.register(`items.${index}.procedure_name`)}

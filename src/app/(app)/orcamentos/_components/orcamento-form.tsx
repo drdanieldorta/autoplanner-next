@@ -52,6 +52,7 @@ import {
   DocumentosSelector,
   type ContractOption,
 } from "../../_components/documentos-selector";
+import { ComboboxBusca } from "../../_components/combobox-busca";
 import { PatientSearchCombobox } from "./patient-search-combobox";
 
 import type {
@@ -1089,52 +1090,26 @@ export function OrcamentoForm({
                 ))}
               </div>
             )}
-            <Select
-              // Valor controlado vazio: volta ao placeholder a cada adição
-              // sem remontar (remontar jogava o foco para o <body>).
-              value=""
-              onValueChange={onAddProtocol}
+            <ComboboxBusca
+              // Seletor de "adicionar": nada fica marcado, volta ao
+              // placeholder a cada protocolo adicionado.
+              selecionadoId={null}
+              opcoes={protocols
+                .filter((p) => !protocolos.some((q) => q.id === p.id))
+                .map((p) => ({ id: p.id, nome: p.name }))}
+              onSelecionar={onAddProtocol}
               disabled={protocols.every((p) =>
                 protocolos.some((q) => q.id === p.id),
               )}
-            >
-              <SelectTrigger
-                className="mt-2"
-                // Com o seletor FECHADO, o Radix trata letra digitada como
-                // busca e chama onValueChange com o primeiro item que casa.
-                // Com value="" cada nova letra adicionaria mais um protocolo
-                // ("bot" → Bioestimulador, Botox, Botox Premium). Aberto, a
-                // busca na lista continua funcionando.
-                onKeyDown={(e) => {
-                  if (
-                    e.key.length === 1 &&
-                    e.key !== " " &&
-                    !e.ctrlKey &&
-                    !e.altKey &&
-                    !e.metaKey
-                  ) {
-                    e.preventDefault();
-                  }
-                }}
-              >
-                <SelectValue
-                  placeholder={
-                    protocolos.length > 0
-                      ? "Adicionar outro protocolo"
-                      : "Adicionar protocolo"
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {protocols
-                  .filter((p) => !protocolos.some((q) => q.id === p.id))
-                  .map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+              placeholder={
+                protocolos.length > 0
+                  ? "Adicionar outro protocolo"
+                  : "Adicionar protocolo"
+              }
+              placeholderBusca="Pesquisar protocolo..."
+              vazio="Nenhum protocolo encontrado."
+              className="mt-2"
+            />
             <p className="text-xs text-muted-foreground mt-1">
               Quantidades e itens se ajustam ao lado, só neste orçamento.
             </p>
@@ -1314,27 +1289,25 @@ export function OrcamentoForm({
                   <span className="text-destructive">*</span>
                 </Label>
                 {hasFeegow ? (
-                  <Select
-                    value={extraProcedureId}
-                    onValueChange={(value) => {
+                  <ComboboxBusca
+                    selecionadoId={extraProcedureId || null}
+                    opcoes={procedures.map((p) => ({
+                      id: p.id,
+                      nome: p.name,
+                      detalhe: formatCurrency(p.value_cents),
+                    }))}
+                    onSelecionar={(value) => {
                       setExtraProcedureId(value);
                       const proc = procedures.find((p) => p.id === value);
                       if (proc) {
                         setExtraValueInput(formatCurrency(proc.value_cents));
                       }
                     }}
-                  >
-                    <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {procedures.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    placeholder="Selecione"
+                    placeholderBusca="Pesquisar procedimento..."
+                    vazio="Nenhum procedimento encontrado."
+                    className="mt-1"
+                  />
                 ) : (
                   <Input
                     value={extraProcedureName}
