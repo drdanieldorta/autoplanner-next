@@ -1,5 +1,6 @@
 import "server-only";
 
+import { registrarAssinatura } from "@/lib/contracts/assinatura";
 import { authentique } from "@/lib/integrations/authentique";
 import { getCompanyCredentials } from "@/lib/integrations/credentials";
 import { feegow, FeegowError } from "@/lib/integrations/feegow";
@@ -167,12 +168,13 @@ export async function anexarContratoAssinadoNaFeegow(args: {
     // Contrato assinado antes de o webhook existir: registra a assinatura
     // de passagem, para o painel deixar de depender da consulta ao vivo.
     if (!linha.contract_signed_at) {
-      await admin
-        .from("propostas")
-        .update({ contract_signed_at: info.signedAt ?? new Date().toISOString() } as never)
-        .eq("id", linha.id)
-        .eq("document_id", documentId)
-        .is("contract_signed_at", null);
+      await registrarAssinatura({
+        propostaId: linha.id,
+        documentId,
+        signedAt: info.signedAt ?? new Date().toISOString(),
+      }).catch(() => {
+        // Best-effort: o anexo abaixo não depende do carimbo.
+      });
     }
   }
 

@@ -449,6 +449,28 @@ motivo, `signatures[0]` nunca é o link do paciente.
 Os caminhos 2 e 3 **só carimbam, nunca anexam**: enquanto a clínica não troca o
 webhook, é o n8n que recebe os eventos e anexa, e a Feegow não apaga anexo.
 
+**Assinou ⇒ "Aprovada" (2026-11-17).** Todo carimbo novo (webhook,
+`registrarAssinatura`) chama `aprovarOrcamentoAssinado`
+([assinatura.ts](src/lib/contracts/assinatura.ts)): `status_id` 2 / `status`
+"aprovado", **só saindo de Pendente** (ou sem status) — Recusada, Em execução e
+Finalizada foram escolhas à mão. Espelha na Feegow como a troca manual
+(`changeProposalStatus`, respeitando `webhook_enabled`), sem bloquear e sem lançar.
+
+**Contratos assinados fora do prontuário (2026-11-17).** Card em `/configuracao`
+(empresa com Feegow e Autentique) envia em lote, com confirmação, os assinados de
+paciente da Feegow ainda sem anexo (`contratosAssinadosForaDoProntuario` /
+`anexarProximoLote` em [anexo-em-lote.ts](src/lib/contracts/anexo-em-lote.ts),
+`POST /api/contratos/anexar-assinados`, 5 por chamada, só admin). Fica de fora o
+que está em envio ou "em dúvida". A rodada pula os já tentados, então uma falha
+permanente não a prende. **Não há como saber pela API se o n8n já anexou** — a
+Feegow não lista anexos (só `/patient/upload-base64`; `/medical-record/timeline`
+traz só formulários) —, por isso o diálogo manda conferir um prontuário antes.
+
+**A Autentique não expõe webhook na API.** O schema tem `WebhookEndpoint`, mas
+nenhuma query ou mutation que o crie, liste ou remova (conferido por introspecção
+em 2026-11-17); o `settings.webhook_url` antigo está vazio em todas as contas.
+Cadastrar e remover webhook é só pelo painel da Autentique, conta a conta.
+
 **O evento é gatilho, não prova.** Nenhuma empresa tem `webhook_secret`, então o HMAC
 (opcional) hoje não roda. Antes de carimbar, a rota confirma na API
 (`getDocumentInfo`): só carimba com `status === "signed"`, isto é, TODOS os signatários

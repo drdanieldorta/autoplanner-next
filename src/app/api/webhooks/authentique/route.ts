@@ -13,6 +13,7 @@ import {
   getCompanyCredentials,
   getPropostaByDocumentId,
 } from "@/lib/integrations/credentials";
+import { aprovarOrcamentoAssinado } from "@/lib/contracts/assinatura";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
@@ -179,7 +180,10 @@ export async function POST(req: Request) {
       { status: 503 },
     );
   }
-  const carimbouAgora = ((stamp.data ?? []) as { id: string }[]).length > 0;
+  const carimbados = (stamp.data ?? []) as { id: string }[];
+  const carimbouAgora = carimbados.length > 0;
+  // Assinou ⇒ orçamento "Aprovada" (só sai de "Pendente"; nunca lança).
+  for (const { id } of carimbados) await aprovarOrcamentoAssinado(id);
 
   // Anexo no prontuário da Feegow, com estado próprio
   // (`lib/contracts/feegow-anexo.ts`). Não depende de ESTA requisição ter
