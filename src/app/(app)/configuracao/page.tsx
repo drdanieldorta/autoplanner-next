@@ -16,7 +16,9 @@ import { PageHeader } from "../_components/page-header";
 import { ConfiguracaoForm } from "./_components/configuracao-form";
 import { BrandingForm } from "./_components/branding-form";
 import { PatientSourceForm } from "./_components/patient-source-form";
+import { contratosAssinadosForaDoProntuario } from "@/lib/contracts/anexo-em-lote";
 import { AutentiqueWebhookCard } from "./_components/autentique-webhook-card";
+import { ContratosProntuarioCard } from "./_components/contratos-prontuario-card";
 
 export const metadata = { title: "Configuração · InfinitePlan" };
 export const dynamic = "force-dynamic";
@@ -57,7 +59,8 @@ export default async function ConfiguracaoPage() {
   }
 
   const companyId = user.companyId;
-  const [status, branding, webhookUrl, ultimaAssinatura] = await Promise.all([
+  const [status, branding, webhookUrl, ultimaAssinatura, foraDoProntuario] =
+    await Promise.all([
     getCredentialsStatus({ companyId }),
     getCompanyBranding(companyId),
     getAutentiqueWebhookUrl(),
@@ -66,6 +69,11 @@ export default async function ConfiguracaoPage() {
     getUltimaAssinaturaRecebida({ companyId }).catch((err: unknown) => {
       console.error("[/configuracao] Falha ao consultar última assinatura:", err);
       return undefined;
+    }),
+    // Lista vazia para empresa sem Feegow ou sem Autentique; falha esconde o card.
+    contratosAssinadosForaDoProntuario(companyId).catch((err: unknown) => {
+      console.error("[/configuracao] Falha ao listar contratos fora do prontuário:", err);
+      return null;
     }),
   ]);
 
@@ -154,6 +162,10 @@ export default async function ConfiguracaoPage() {
         url={webhookUrl}
         ultimaAssinatura={ultimaAssinatura}
       />
+
+      {status?.hasFeegow && status.hasAuthentique && foraDoProntuario && (
+        <ContratosProntuarioCard pendentes={foraDoProntuario.length} />
+      )}
     </div>
   );
 }
